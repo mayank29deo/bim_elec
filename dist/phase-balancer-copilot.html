@@ -1,0 +1,2777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phase-Balancing Copilot</title>
+<meta name="description" content="Dry-run simulator for the Panel Schedule and Phase-Balancing Copilot: audit panels, propose the fewest circuit moves, review and apply.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: project browser (levels and panels) on the left, working canvas on the right,
+   presenter strip pinned to the bottom during a guided dry run.
+   Palette: switchgear enclosure grey, copper bus, R-Y-B phase colours; teal marks the copilot's fix. */
+:root {
+  --ground: #E1E5E0;
+  --chassis: #D2D8D2;
+  --plate: #F8F9F6;
+  --plate-2: #EEF1EC;
+  --ink: #16201C;
+  --ink-2: #47534E;
+  --ink-3: #75807B;
+  --rule: #C8CFC9;
+  --rule-strong: #A7B1AA;
+  --phase-a: #C8432B; --phase-a-ink: #A0311C; --phase-a-soft: #F2DBD4;
+  --phase-b: #D89D14; --phase-b-ink: #7E5700; --phase-b-soft: #F4E7C4;
+  --phase-c: #2C63BE; --phase-c-ink: #224F99; --phase-c-soft: #D8E2F3;
+  --copper: #B46B34; --copper-hi: #DA9862; --copper-lo: #8A4D20;
+  --fix: #0A7C74; --fix-ink: #076259; --fix-soft: #D2E9E5; --on-fix: #FFFFFF;
+  --alarm: #B3173F; --alarm-soft: #F4D8DF;
+  --warn: #A55100; --warn-soft: #F4E1CB;
+  --lock: #56636B; --lock-soft: #E0E5E8;
+  --shadow: 0 1px 0 rgba(22, 32, 28, .05), 0 1px 3px rgba(22, 32, 28, .10);
+  --shadow-lift: 0 6px 18px rgba(22, 32, 28, .18);
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", "Roboto Condensed", "Helvetica Neue", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --t-xs: 11px; --t-sm: 12.5px; --t-base: 14px; --t-md: 16px; --t-lg: 20px; --t-xl: 28px; --t-2xl: 40px; --t-3xl: 60px;
+  --r: 6px;
+  --row: 50px;
+  --bus: 120px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0F1513; --chassis: #1C2421; --plate: #19211E; --plate-2: #212A26;
+    --ink: #E3E9E5; --ink-2: #A8B3AD; --ink-3: #76837D; --rule: #2C3733; --rule-strong: #3E4C46;
+    --phase-a: #E2644C; --phase-a-ink: #F28C76; --phase-a-soft: #3A1E18;
+    --phase-b: #E5B23C; --phase-b-ink: #F0C868; --phase-b-soft: #392C10;
+    --phase-c: #4F8BEA; --phase-c-ink: #8AB1F3; --phase-c-soft: #172A47;
+    --copper: #C98149; --copper-hi: #E7A774; --copper-lo: #8E5427;
+    --fix: #2DB3A6; --fix-ink: #5FD0C4; --fix-soft: #12312D; --on-fix: #06201D;
+    --alarm: #EE5A7F; --alarm-soft: #3B1520; --warn: #E89A3C; --warn-soft: #3A2810; --lock: #95A3AB; --lock-soft: #263036;
+    --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .4);
+    --shadow-lift: 0 8px 22px rgba(0, 0, 0, .55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0F1513; --chassis: #1C2421; --plate: #19211E; --plate-2: #212A26;
+  --ink: #E3E9E5; --ink-2: #A8B3AD; --ink-3: #76837D; --rule: #2C3733; --rule-strong: #3E4C46;
+  --phase-a: #E2644C; --phase-a-ink: #F28C76; --phase-a-soft: #3A1E18;
+  --phase-b: #E5B23C; --phase-b-ink: #F0C868; --phase-b-soft: #392C10;
+  --phase-c: #4F8BEA; --phase-c-ink: #8AB1F3; --phase-c-soft: #172A47;
+  --copper: #C98149; --copper-hi: #E7A774; --copper-lo: #8E5427;
+  --fix: #2DB3A6; --fix-ink: #5FD0C4; --fix-soft: #12312D; --on-fix: #06201D;
+  --alarm: #EE5A7F; --alarm-soft: #3B1520; --warn: #E89A3C; --warn-soft: #3A2810; --lock: #95A3AB; --lock-soft: #263036;
+  --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .4);
+  --shadow-lift: 0 8px 22px rgba(0, 0, 0, .55);
+}
+
+/* ---------- base */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font: 400 var(--t-base)/1.5 var(--font-body);
+  font-feature-settings: "ss02";
+}
+body.touring { padding-bottom: 168px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+table { border-collapse: collapse; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--fix); outline-offset: 2px; border-radius: 3px; }
+.num, .mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.tx-alarm { color: var(--alarm); }
+.tx-fix { color: var(--fix-ink); }
+.tx-warn { color: var(--warn); }
+.tx-muted { color: var(--ink-3); }
+.ph-A { --ph: var(--phase-a); --ph-ink: var(--phase-a-ink); --ph-soft: var(--phase-a-soft); }
+.ph-B { --ph: var(--phase-b); --ph-ink: var(--phase-b-ink); --ph-soft: var(--phase-b-soft); }
+.ph-C { --ph: var(--phase-c); --ph-ink: var(--phase-c-ink); --ph-soft: var(--phase-c-soft); }
+.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* engraved nameplate, like a traffolyte label on a panel door */
+.plate {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--ink); color: var(--plate);
+  font: 600 13px/1 var(--font-display); letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 8px 4px; border-radius: 2px; white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+.plate::before, .plate::after { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--ink-3); opacity: .8; }
+.plate-lg { font-size: 15px; padding: 7px 10px 6px; }
+.plate-xl { font-size: 26px; padding: 8px 14px 7px; letter-spacing: .06em; }
+
+/* ---------- buttons and controls */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+  padding: 7px 13px; border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--plate); color: var(--ink); font-weight: 500; font-size: var(--t-sm);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s, transform .1s;
+}
+.btn:hover:not(:disabled) { border-color: var(--ink-2); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--fix); border-color: var(--fix); color: var(--on-fix); }
+.btn-primary:hover:not(:disabled) { background: var(--fix-ink); border-color: var(--fix-ink); }
+.btn-ink { background: var(--ink); border-color: var(--ink); color: var(--plate); }
+.btn-ghost { background: transparent; border-color: transparent; }
+.btn-ghost:hover:not(:disabled) { background: var(--plate-2); border-color: var(--rule); }
+.btn-sm { min-height: 28px; padding: 3px 9px; font-size: var(--t-xs); }
+.icon-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--rule-strong); border-radius: var(--r); background: var(--plate); cursor: pointer; }
+.seg { display: inline-flex; padding: 2px; background: var(--plate-2); border: 1px solid var(--rule); border-radius: var(--r); }
+.seg button {
+  border: 0; background: transparent; padding: 6px 11px; border-radius: 4px; cursor: pointer;
+  font-size: var(--t-sm); font-weight: 500; color: var(--ink-2); white-space: nowrap;
+}
+.seg button[aria-pressed="true"] { background: var(--plate); color: var(--ink); box-shadow: var(--shadow); }
+.seg.small button { padding: 4px 9px; font-size: var(--t-xs); }
+input[type="range"] { accent-color: var(--fix); width: 150px; }
+input[type="number"], input[type="text"], select {
+  font: 500 var(--t-sm) var(--font-data); color: var(--ink); background: var(--plate);
+  border: 1px solid var(--rule-strong); border-radius: 4px; padding: 6px 8px; min-width: 0;
+}
+input[type="checkbox"] { accent-color: var(--fix); width: 16px; height: 16px; }
+
+/* ---------- chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font: 600 var(--t-xs)/1 var(--font-body); letter-spacing: .02em;
+  padding: 4px 8px 4px 6px; border-radius: 999px; border: 1px solid transparent;
+}
+.chip .i { width: 13px; height: 13px; vertical-align: 0; }
+.chip-unknown { color: var(--ink-3); border: 1px dashed var(--rule-strong); }
+.chip-ok { color: var(--fix-ink); background: var(--fix-soft); }
+.chip-over { color: var(--alarm); background: var(--alarm-soft); }
+.chip-proposed { color: var(--fix-ink); border-color: var(--fix); background: var(--plate); }
+.chip-accepted { color: var(--on-fix); background: var(--fix); }
+.chip-applied { color: var(--plate); background: var(--ink); }
+.chip-rejected { color: var(--ink-2); background: var(--plate-2); border-color: var(--rule); }
+.chip-needs { color: var(--warn); background: var(--warn-soft); }
+.chip-locked { color: var(--lock); background: var(--lock-soft); }
+
+/* ---------- app frame */
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px;
+  padding: 12px clamp(16px, 2.4vw, 28px);
+  background: var(--plate); border-bottom: 1px solid var(--rule);
+}
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; flex-wrap: wrap; }
+.brand-meta { display: flex; flex-direction: column; line-height: 1.3; font-size: var(--t-sm); color: var(--ink-2); }
+.brand-meta b { color: var(--ink); font-weight: 600; }
+.dry { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-weight: 500; }
+.dry::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.pipeline { display: flex; align-items: center; gap: 0; margin: 0 0 0 auto; padding: 0; list-style: none; counter-reset: step; }
+.pipeline li {
+  counter-increment: step; display: flex; align-items: center; gap: 6px;
+  font: 600 var(--t-sm)/1 var(--font-display); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3);
+  padding: 0 4px;
+}
+.pipeline li::before {
+  content: counter(step); display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  border: 1.5px solid var(--rule-strong); font: 600 11px/1 var(--font-data); color: var(--ink-3); background: var(--plate);
+}
+.pipeline li + li::after { content: none; }
+.pipeline .wire { width: 22px; height: 2px; background: var(--rule-strong); }
+.pipeline li.done { color: var(--ink); }
+.pipeline li.done::before { background: var(--fix); border-color: var(--fix); color: var(--on-fix); }
+.pipeline li.now { color: var(--fix-ink); }
+.pipeline li.now::before { border-color: var(--fix); color: var(--fix-ink); box-shadow: 0 0 0 3px var(--fix-soft); }
+.pipeline .wire.done { background: var(--fix); }
+.top-actions { display: flex; gap: 8px; align-items: center; }
+
+.tabs {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  padding: 0 clamp(16px, 2.4vw, 28px); background: var(--plate); border-bottom: 1px solid var(--rule);
+}
+.tabs button {
+  border: 0; background: none; cursor: pointer; padding: 11px 14px 10px; white-space: nowrap;
+  font: 600 var(--t-md)/1 var(--font-display); letter-spacing: .02em; color: var(--ink-2);
+  border-bottom: 3px solid transparent; margin-bottom: -1px;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--copper); }
+.tabs .count { font: 500 var(--t-xs) var(--font-data); color: var(--ink-3); margin-left: 4px; }
+
+.shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); align-items: start; }
+.browser {
+  position: sticky; top: 112px; max-height: calc(100vh - 112px); overflow-y: auto;
+  border-right: 1px solid var(--rule); background: var(--plate-2);
+  padding-block: 14px 24px; padding-inline: 14px; display: flex; flex-direction: column; gap: 14px;
+}
+.main { padding-block: 22px 48px; padding-inline: clamp(16px, 2.4vw, 32px); min-width: 0; outline: none; }
+
+/* ---------- project browser */
+.pb-head { display: flex; justify-content: space-between; align-items: baseline; font: 600 var(--t-sm)/1 var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.pb-head span { font: 500 var(--t-xs) var(--font-data); letter-spacing: 0; text-transform: none; color: var(--ink-3); }
+.pb-level { display: flex; flex-direction: column; gap: 2px; }
+.pb-level-name { font: 600 var(--t-xs)/1.2 var(--font-body); color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; padding: 6px 6px 4px; }
+.pb-item {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r); background: transparent; cursor: pointer; text-align: left;
+}
+.pb-item:hover { background: var(--plate); border-color: var(--rule); }
+.pb-item[aria-current="true"] { background: var(--plate); border-color: var(--rule-strong); box-shadow: var(--shadow); }
+.pb-item .plate { font-size: 11.5px; padding: 4px 6px 3px; gap: 5px; }
+.pb-item .plate::before, .pb-item .plate::after { width: 3px; height: 3px; }
+.pb-imb { font: 500 var(--t-sm) var(--font-data); text-align: right; }
+.lamp { width: 9px; height: 9px; border-radius: 50%; background: var(--rule-strong); box-shadow: inset 0 -1px 1px rgba(0,0,0,.25); }
+.lamp-ok, .lamp-applied, .lamp-accepted, .lamp-proposed { background: var(--fix); }
+.lamp-over { background: var(--alarm); }
+.lamp-needs { background: var(--warn); }
+.lamp-locked { background: var(--lock); }
+.lamp-proposed { box-shadow: 0 0 0 3px var(--fix-soft); }
+.mini { display: inline-flex; align-items: flex-end; gap: 2px; height: 22px; width: 26px; }
+.mini i { flex: 1; min-height: 2px; border-radius: 1px 1px 0 0; background: var(--ph); }
+.mini.unknown i { background: var(--rule-strong); height: 40% !important; }
+.pb-imb-wrap { display: flex; align-items: center; gap: 8px; }
+
+.activity { border-top: 1px solid var(--rule); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.activity ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.activity li { display: grid; grid-template-columns: 58px 1fr; gap: 6px; font-size: var(--t-xs); line-height: 1.4; color: var(--ink-2); }
+.activity time { font-family: var(--font-data); color: var(--ink-3); }
+.activity li.k-ok span { color: var(--fix-ink); }
+.activity li.k-alarm span { color: var(--alarm); }
+.activity li.k-warn span { color: var(--warn); }
+.activity .empty { font-size: var(--t-xs); color: var(--ink-3); }
+
+/* ---------- views: shared */
+.view { display: flex; flex-direction: column; gap: 18px; }
+.view-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 24px; }
+.eyebrow { font: 600 var(--t-xs)/1 var(--font-body); letter-spacing: .12em; text-transform: uppercase; color: var(--copper); margin-bottom: 6px; }
+.view-head h1 { font: 600 var(--t-2xl)/1 var(--font-display); letter-spacing: -.005em; }
+.summary { margin-top: 8px; font-size: var(--t-md); color: var(--ink-2); max-width: 70ch; }
+.summary b { color: var(--ink); font-weight: 600; font-family: var(--font-data); font-size: .95em; }
+.summary .sep { color: var(--rule-strong); margin: 0 4px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.card { background: var(--plate); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); min-width: 0; }
+.card-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+.card-h h2 { font: 600 var(--t-md)/1.2 var(--font-display); letter-spacing: .04em; text-transform: uppercase; margin-right: auto; }
+.card-sub { font-size: var(--t-xs); color: var(--ink-3); }
+.card-b { padding: 14px 16px; }
+.hint { font-size: var(--t-xs); color: var(--ink-3); line-height: 1.45; }
+.table-wrap { overflow-x: auto; }
+.tbl { width: 100%; font-size: var(--t-sm); }
+.tbl th { text-align: left; font: 600 var(--t-xs)/1.2 var(--font-body); color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; padding: 9px 10px; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
+.tbl td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .r { text-align: right; }
+.tbl td.num { font-size: var(--t-sm); }
+.tbl td.nw { white-space: nowrap; }
+.tbl tbody tr:hover td { background: var(--plate-2); }
+.sort-btn { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; display: inline-flex; gap: 4px; align-items: center; }
+.sort-btn[data-active="true"] { color: var(--ink); }
+.link-btn { border: 0; background: none; padding: 0; cursor: pointer; color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+.link-btn:hover { text-decoration-color: var(--ink); }
+
+/* ---------- audit: riser */
+.audit-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
+.riser-body { position: relative; padding: 8px 16px 16px; overflow: hidden; }
+.storey { position: relative; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0 18px; min-height: 96px; border-bottom: 3px solid var(--rule-strong); padding-block: 12px; }
+.storey:last-of-type { border-bottom: 0; }
+.storey-tag { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; font-size: var(--t-xs); color: var(--ink-3); }
+.storey-tag b { font: 600 var(--t-md)/1 var(--font-display); color: var(--ink); letter-spacing: .03em; }
+.storey-run { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding-left: 20px; }
+.storey-run::before { /* the vertical riser, drawn through every storey */
+  content: ""; position: absolute; left: 3px; top: -15px; bottom: -15px; width: 5px; border-radius: 1px;
+  background: linear-gradient(90deg, var(--copper-lo), var(--copper-hi) 45%, var(--copper));
+}
+.storey:first-of-type .storey-run::before { top: 18px; }
+.rcard {
+  position: relative; display: grid; grid-template-columns: auto auto; grid-template-areas: "plate mini" "imb mini" "chip chip";
+  align-items: end; gap: 6px 12px; padding: 9px 10px 9px; min-width: 132px;
+  background: var(--plate); border: 1px solid var(--rule-strong); border-radius: 4px; cursor: pointer; text-align: left;
+  box-shadow: var(--shadow); transition: transform .15s, box-shadow .15s;
+}
+.rcard::before { /* feeder tap from the riser */
+  content: ""; position: absolute; left: -11px; bottom: 22px; width: 10px; height: 2px; background: var(--copper);
+}
+.rcard:first-child::before { left: -17px; width: 16px; }
+.rcard:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.rcard .plate { grid-area: plate; justify-self: start; font-size: 12px; }
+.rcard .mini { grid-area: mini; height: 46px; width: 30px; align-self: end; }
+.rcard-imb { grid-area: imb; font: 600 var(--t-lg)/1 var(--font-data); font-variant-numeric: tabular-nums; }
+.rcard .chip { grid-area: chip; justify-self: start; }
+.rcard .stale { position: absolute; top: -8px; right: -6px; font: 600 10px/1 var(--font-body); background: var(--warn); color: var(--plate); padding: 3px 5px; border-radius: 3px; }
+.rcard .cover {
+  position: absolute; inset: -1px; display: grid; place-items: center; border-radius: 4px;
+  background: var(--plate-2); color: var(--ink-3); font: 500 var(--t-xs) var(--font-data); border: 1px dashed var(--rule-strong);
+  animation: uncover .35s ease-out var(--d, 0ms) both;
+}
+@keyframes uncover { to { opacity: 0; visibility: hidden; } }
+.scanline { position: absolute; left: 0; right: 0; height: 2px; bottom: 0; opacity: 0; pointer-events: none;
+  background: var(--fix); box-shadow: 0 0 0 6px color-mix(in srgb, var(--fix) 18%, transparent), 0 0 24px 4px color-mix(in srgb, var(--fix) 35%, transparent); }
+.riser.scanning .scanline { animation: scan 2.5s cubic-bezier(.45, 0, .55, 1) both; }
+@keyframes scan { 0% { bottom: 0; opacity: 1; } 92% { opacity: 1; } 100% { bottom: 100%; opacity: 0; } }
+.mdb { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 10px; border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--plate-2); font-size: var(--t-xs); color: var(--ink-2); position: relative; }
+.mdb::before { content: ""; position: absolute; left: -17px; bottom: 50%; width: 16px; height: 2px; background: var(--copper); }
+
+/* ---------- audit: dumbbell */
+.db-rows { display: flex; flex-direction: column; gap: 3px; padding: 10px 16px 14px; }
+.db-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) 92px; align-items: center; gap: 10px; min-height: 26px; }
+.db-name { font: 600 var(--t-sm)/1 var(--font-display); letter-spacing: .04em; border: 0; background: none; padding: 0; cursor: pointer; text-align: left; color: var(--ink); }
+.db-track { position: relative; height: 22px; }
+.db-track .zone { position: absolute; top: 3px; bottom: 3px; left: 0; background: var(--fix-soft); border-radius: 2px; }
+.db-track .tline { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px dashed var(--fix); }
+.db-track .axis { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--rule); }
+.db-track .link { position: absolute; top: calc(50% - 1.5px); height: 3px; background: var(--fix); opacity: .55; border-radius: 2px; }
+.db-track .dot { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; }
+.db-track .dot.before { border: 2.5px solid var(--ink-2); background: var(--plate); }
+.db-track .dot.before.over { border-color: var(--alarm); }
+.db-track .dot.after { background: var(--fix); box-shadow: 0 0 0 2px var(--plate); }
+.db-track .dot.after.miss { background: var(--warn); }
+.db-val { font: 500 var(--t-xs) var(--font-data); color: var(--ink-2); text-align: right; white-space: nowrap; }
+.db-axis { display: grid; grid-template-columns: 54px minmax(0, 1fr) 92px; gap: 10px; padding: 0 16px; }
+.db-axis .ticks { position: relative; height: 16px; font: 500 10px/1 var(--font-data); color: var(--ink-3); }
+.db-axis .ticks span { position: absolute; transform: translateX(-50%); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--t-xs); color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+
+/* ---------- workspace */
+.ws-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.ws-id { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ws-spec { font: 500 var(--t-sm)/1.4 var(--font-data); color: var(--ink-2); }
+.ws-note { font-size: var(--t-sm); color: var(--copper); font-weight: 500; margin-top: 2px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 12px 16px; }
+.ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ctl-label { font: 600 var(--t-xs)/1 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.ctl output { font: 600 var(--t-md)/1 var(--font-data); min-width: 3.2ch; }
+.ctl-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.ws-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr); gap: 18px; align-items: start; }
+.ws-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* panelboard */
+.board-wrap { padding: 14px 16px 16px; overflow-x: auto; }
+.board-frame { min-width: 520px; background: var(--chassis); border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.25); }
+.board-headrow { display: grid; grid-template-columns: minmax(0, 1fr) var(--bus) minmax(0, 1fr); align-items: end; margin-bottom: 6px; font: 600 10.5px/1 var(--font-body); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.board-headrow > span:last-child { text-align: right; }
+.bus-labels { position: relative; height: 20px; }
+.bus-labels b { position: absolute; top: 0; width: 20px; height: 20px; margin-left: -10px; display: grid; place-items: center; border-radius: 3px; color: #fff; background: var(--ph); font: 700 11px/1 var(--font-data); letter-spacing: 0; }
+.bus-labels b.ph-A { left: 30%; } .bus-labels b.ph-B { left: 50%; } .bus-labels b.ph-C { left: 70%; }
+.board { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--bus) minmax(0, 1fr); grid-auto-rows: var(--row); row-gap: 4px; }
+.bus { grid-column: 2; grid-row: 1 / -1; width: 100%; height: 100%; display: block; overflow: visible; }
+.bus .bar { fill: url(#copper); }
+.bus .tap { stroke-width: 3; vector-effect: non-scaling-stroke; }
+.bus .tap.faint { opacity: .28; }
+.bus .stud { fill: var(--ph); }
+.bus .tap.A, .bus .stud.A { stroke: var(--phase-a); fill: var(--phase-a); }
+.bus .tap.B, .bus .stud.B { stroke: var(--phase-b); fill: var(--phase-b); }
+.bus .tap.C, .bus .stud.C { stroke: var(--phase-c); fill: var(--phase-c); }
+.brk {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; min-width: 0;
+  background: var(--plate); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 0 0 0 8px;
+  cursor: pointer; box-shadow: 0 1px 0 rgba(0,0,0,.08); transition: box-shadow .15s, border-color .15s;
+}
+.brk.R { flex-direction: row-reverse; padding: 0 8px 0 0; text-align: right; }
+.brk:hover { border-color: var(--ink-2); }
+.brk-no { font: 600 var(--t-md)/1 var(--font-data); min-width: 2ch; text-align: center; color: var(--ink); }
+.brk-body { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; gap: 2px; }
+.brk-name { font-size: 12px; font-weight: 500; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.brk-meta { font: 400 10.5px/1.2 var(--font-data); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .02em; }
+.brk-va { display: flex; flex-direction: column; align-items: flex-end; flex: none; line-height: 1.05; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.brk.R .brk-va { align-items: flex-start; }
+.brk-va b { font-size: 13px; font-weight: 600; }
+.brk-va small { font-size: 9.5px; color: var(--ink-3); letter-spacing: .06em; }
+.brk.zero .brk-va b { color: var(--warn); }
+.brk-handle { align-self: stretch; display: flex; flex-direction: column; gap: 4px; width: 16px; padding: 5px 0; flex: none; }
+.brk-handle i { flex: 1; background: var(--ph); border-radius: 2px; }
+.brk.L .brk-handle { border-left: 1px solid var(--rule); padding-left: 0; margin-left: auto; width: 14px; border-radius: 0 3px 3px 0; overflow: hidden; }
+.brk.R .brk-handle { border-right: 1px solid var(--rule); width: 14px; border-radius: 3px 0 0 3px; overflow: hidden; }
+.brk-handle { position: relative; }
+.brk.multi .brk-handle::after { /* handle tie bar on multi-pole breakers */
+  content: ""; position: absolute; left: 50%; top: 10px; bottom: 10px; width: 3px; margin-left: -1.5px; background: var(--ink); opacity: .55; border-radius: 2px;
+}
+.brk-lock { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--ink-3); cursor: pointer; opacity: .55; }
+.brk:hover .brk-lock, .brk-lock.on, .brk-lock:focus-visible { opacity: 1; }
+.brk-lock:hover { border-color: var(--rule-strong); background: var(--plate-2); }
+.brk-lock.on { color: var(--lock); background: var(--lock-soft); }
+.brk-lock .i { width: 14px; height: 14px; }
+.brk.locked { background-image: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--lock) 9%, transparent) 7px 8px); }
+.brk.spare { background: var(--plate-2); border-style: dashed; }
+.brk.spare .brk-name { color: var(--ink-2); font-style: italic; }
+.brk.zero .brk-meta { color: var(--warn); }
+.brk.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink); }
+.brk.pending { border: 1.5px dashed var(--fix); }
+.brk.moved { border: 2px solid var(--fix); box-shadow: 0 0 0 4px var(--fix-soft); }
+.brk.flying { z-index: 5; box-shadow: var(--shadow-lift), 0 0 0 4px var(--fix-soft); }
+.was, .pend { font: 600 10px/1 var(--font-data); padding: 3px 5px; border-radius: 2px; white-space: nowrap; }
+.was { color: var(--on-fix); background: var(--fix); }
+.pend { color: var(--fix-ink); background: var(--plate); border: 1px dashed var(--fix); }
+.brk .was, .brk .pend { position: absolute; top: -9px; z-index: 2; }
+.brk.L .was, .brk.L .pend { right: 44px; }
+.brk.R .was, .brk.R .pend { left: 44px; }
+.sched .was, .sched .pend { display: inline-block; margin-left: 4px; }
+.brk.eval { animation: evalpulse 1.1s ease-in-out var(--d, 0ms) 2; }
+@keyframes evalpulse { 0%, 100% { box-shadow: 0 1px 0 rgba(0,0,0,.08); } 50% { box-shadow: 0 0 0 3px var(--fix-soft), 0 0 0 4px var(--fix); } }
+.space {
+  position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 10px; border: 1px dashed color-mix(in srgb, var(--ink-3) 55%, transparent); border-radius: 4px;
+  font: 500 10.5px/1 var(--font-data); color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em;
+}
+.space.R { flex-direction: row-reverse; }
+.space.ghost { border: 1.5px dashed var(--fix); color: var(--fix-ink); background: color-mix(in srgb, var(--fix) 7%, transparent); text-transform: none; letter-spacing: 0; }
+.board-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 16px 14px; font-size: var(--t-xs); color: var(--ink-2); }
+.board-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg-box { width: 18px; height: 12px; border-radius: 2px; display: inline-block; border: 1px solid var(--rule-strong); background: var(--plate); }
+.lg-box.moved { border: 2px solid var(--fix); }
+.lg-box.pending { border: 1.5px dashed var(--fix); }
+.lg-box.space { border: 1px dashed var(--ink-3); background: transparent; }
+.lg-box.locked { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--lock) 3px 4px); }
+
+/* schedule */
+.sched { width: 100%; min-width: 640px; font-size: var(--t-sm); }
+.sched th { font: 600 10.5px/1.2 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 7px 6px; border-bottom: 1.5px solid var(--ink); text-align: left; white-space: nowrap; }
+.sched td { padding: 6px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.sched .ckt { font: 600 var(--t-sm) var(--font-data); width: 3ch; text-align: center; }
+.sched .desc { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.sched .pc { font: 500 11.5px var(--font-data); text-align: center; width: 80px; color: var(--ink-3); }
+.sched .pc.live { color: var(--ink); background: var(--ph-soft); font-weight: 600; }
+.sched th.pc { text-align: center; color: var(--ink); }
+.sched .va { font: 500 var(--t-sm) var(--font-data); text-align: right; }
+.sched tr.moved td.side-moved { background: var(--fix-soft); }
+.sched tfoot td { font: 600 var(--t-sm) var(--font-data); border-top: 1.5px solid var(--ink); border-bottom: 0; }
+.sched .muted { color: var(--ink-3); }
+
+/* readout */
+.readout { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.readout-top { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.k { display: block; font: 600 var(--t-xs)/1 var(--font-body); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.imb-big { font: 600 var(--t-3xl)/.9 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.imb-before { font: 600 var(--t-xl)/1 var(--font-display); color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 2px; }
+.imb-arrow { color: var(--ink-3); font-size: var(--t-lg); padding-bottom: 6px; }
+.gauge { position: relative; height: 12px; background: var(--plate-2); border-radius: 6px; border: 1px solid var(--rule); }
+.gauge .g-ok { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fix-soft); border-right: 2px solid var(--fix); border-radius: 6px 0 0 6px; }
+.gauge .g-mark { position: absolute; top: -5px; width: 3px; height: 20px; margin-left: -1.5px; border-radius: 2px; background: var(--ink); }
+.gauge .g-mark.before { background: var(--alarm); opacity: .9; }
+.gauge .g-mark.after { background: var(--fix); }
+.gauge-scale { position: relative; height: 12px; font: 500 10px/1 var(--font-data); color: var(--ink-3); }
+.gauge-scale span { position: absolute; transform: translateX(-50%); }
+.readout-note { font-size: var(--t-xs); color: var(--ink-2); }
+
+/* phase loading */
+.pl { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.pl-row { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: center; }
+.pl-tag { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 3px; background: var(--ph); color: #fff; font: 700 12px/1 var(--font-data); }
+.pl-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pl-track { position: relative; height: 18px; }
+.pl-band { position: absolute; top: -3px; bottom: -3px; background: var(--fix-soft); border-left: 1px solid var(--fix); border-right: 1px solid var(--fix); }
+.pl-avg { position: absolute; top: -5px; bottom: -5px; width: 0; border-left: 1.5px dashed var(--ink-2); }
+.pl-before { position: absolute; left: 0; top: 2px; height: 14px; border: 1.5px dashed var(--ph); border-radius: 2px; background: transparent; }
+.pl-bar { position: absolute; left: 0; top: 2px; height: 14px; background: var(--ph); border-radius: 2px; transition: width .9s cubic-bezier(.3, 0, .2, 1); }
+.pl-vals { display: flex; justify-content: space-between; gap: 8px; font: 500 11.5px/1.2 var(--font-data); color: var(--ink-2); flex-wrap: wrap; }
+.pl-vals b { color: var(--ink); font-weight: 600; }
+.pl-foot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--t-xs); color: var(--ink-2); padding-top: 2px; }
+.pl-foot span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* phasor */
+.phasor-wrap { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 14px; padding: 12px 16px 16px; align-items: center; }
+.phasor { width: 180px; height: 180px; overflow: visible; }
+.phasor .ring { fill: none; stroke: var(--rule); stroke-width: 1; }
+.phasor .axis { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 3; }
+.phasor .vec { stroke-width: 3.5; stroke-linecap: round; }
+.phasor .vec.A { stroke: var(--phase-a); } .phasor .vec.B { stroke: var(--phase-b); } .phasor .vec.C { stroke: var(--phase-c); }
+.phasor .vec.N { stroke: var(--ink); stroke-width: 4.5; }
+.phasor .head.A { fill: var(--phase-a); } .phasor .head.B { fill: var(--phase-b); } .phasor .head.C { fill: var(--phase-c); } .phasor .head.N { fill: var(--ink); }
+.phasor text { font: 600 11px var(--font-data); fill: var(--ink-2); }
+.neutral-big { font: 600 var(--t-xl)/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.phasor-copy { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* inspector */
+.insp { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.insp-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; font-size: var(--t-sm); }
+.insp-grid dt { color: var(--ink-3); font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+.insp-grid dd { margin: 0; }
+.insp-grid input[type="number"] { width: 110px; }
+.check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--t-sm); }
+.sheet-tag { white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; font: 500 11px/1 var(--font-data); padding: 3px 6px; border-radius: 3px; border: 1px solid var(--rule-strong); margin: 0 4px 4px 0; }
+.sheet-tag.issued { border-color: var(--warn); color: var(--warn); }
+
+/* review dialog and trace */
+.review-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.dialog { overflow: hidden; }
+.dialog-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 12px 16px; background: var(--ink); color: var(--plate); }
+.dialog-h h2 { font: 600 var(--t-md)/1.2 var(--font-display); letter-spacing: .04em; text-transform: uppercase; margin-right: auto; }
+.dialog-h .txn { font: 500 var(--t-xs) var(--font-data); opacity: .75; }
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 11px 16px; font-size: var(--t-sm); border-bottom: 1px solid var(--rule); }
+.banner .i { margin-top: 2px; }
+.banner-needs { background: var(--warn-soft); color: var(--warn); }
+.banner-locked { background: var(--lock-soft); color: var(--lock); }
+.banner-ok { background: var(--fix-soft); color: var(--fix-ink); }
+.banner-warn { background: var(--warn-soft); color: var(--warn); }
+.banner p { color: var(--ink); }
+.chg td { font-size: var(--t-sm); }
+.chg td.cname { min-width: 170px; }
+.chg td.num { white-space: nowrap; }
+.chg .ckt { font: 600 var(--t-md) var(--font-data); }
+.chg .slot { font: 500 var(--t-sm) var(--font-data); white-space: nowrap; }
+.chg .slot i { font-style: normal; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; background: var(--ph); color: #fff; font: 700 10.5px/1 var(--font-data); margin-left: 4px; }
+.chg .newno { font: 600 var(--t-md) var(--font-data); color: var(--fix-ink); }
+.chg .kind { font: 600 10px/1 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: block; margin-top: 3px; }
+.dialog-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; border-top: 1px solid var(--rule); background: var(--plate-2); }
+.dialog-foot .metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 500 var(--t-xs) var(--font-data); color: var(--ink-2); margin-right: auto; }
+.dialog-foot .metrics b { color: var(--ink); }
+.empty-state { padding: 22px 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; color: var(--ink-2); font-size: var(--t-sm); }
+.trace ol { list-style: none; margin: 0; padding: 12px 16px 4px; display: flex; flex-direction: column; gap: 10px; counter-reset: it; }
+.trace li { position: relative; padding-left: 26px; font-size: var(--t-sm); line-height: 1.45; }
+.trace li::before { counter-increment: it; content: counter(it); position: absolute; left: 0; top: 1px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--plate); font: 600 10px/1 var(--font-data); }
+.trace li.stop::before { content: "■"; background: var(--fix); color: var(--on-fix); font-size: 8px; }
+.trace li.reveal { animation: rise .45s ease-out var(--d, 0ms) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.trace .muted { color: var(--ink-3); font-size: var(--t-xs); }
+.explain { margin: 6px 16px 16px; padding: 12px 14px; border-left: 3px solid var(--copper); background: var(--plate-2); border-radius: 0 6px 6px 0; display: flex; flex-direction: column; gap: 6px; }
+.explain p { font-size: var(--t-sm); line-height: 1.55; }
+.explain .hint { font-style: italic; }
+
+/* compare */
+.cmp-pitch { display: block; font: 600 var(--t-xl)/1.15 var(--font-display); max-width: 60ch; }
+.cmp-pitch em { font-style: normal; color: var(--fix-ink); }
+.cmp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.cmp-col .card-h h2 { font-size: var(--t-md); }
+.cmp-col.best { border-color: var(--fix); box-shadow: 0 0 0 1px var(--fix), var(--shadow); }
+.cmp-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--rule); border-bottom: 1px solid var(--rule); }
+.cmp-stats > div { background: var(--plate); padding: 12px 14px; }
+.cmp-stats .v { font: 600 var(--t-2xl)/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.cmp-stats .v.small { font-size: var(--t-xl); }
+.slotmap { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 4px; padding: 14px; }
+.sm { position: relative; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; border-radius: 3px; font: 500 10.5px/1 var(--font-data); background: var(--plate-2); color: var(--ink-3); border: 1px solid transparent; overflow: hidden; white-space: nowrap; }
+.sm.load { background: var(--ph-soft); color: var(--ink); border-color: color-mix(in srgb, var(--ph) 40%, transparent); }
+.sm.load::before { content: ""; width: 4px; align-self: stretch; margin: 3px 0; border-radius: 1px; background: var(--ph); }
+.sm.moved { border: 2px solid var(--fix); box-shadow: 0 0 0 2px var(--fix-soft); }
+.sm b { font-weight: 600; }
+.sm .va { margin-left: auto; }
+.sm.locked { background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--lock) 18%, transparent) 5px 6px); }
+.cmp-list { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 6px; font-size: var(--t-xs); color: var(--ink-2); }
+.cmp-list .sheets { display: flex; flex-wrap: wrap; }
+
+/* report */
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.kpi { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.kpi .kid { font: 600 var(--t-xs)/1 var(--font-data); color: var(--copper); }
+.kpi .kname { font-size: var(--t-sm); font-weight: 500; line-height: 1.3; min-height: 2.6em; }
+.kpi .kval { font: 600 var(--t-2xl)/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.kpi .kval.na { font-size: var(--t-md); color: var(--ink-3); line-height: 1.3; font-family: var(--font-body); font-weight: 500; }
+.kpi .chip { align-self: flex-start; }
+.kpi .ktarget { font: 500 var(--t-xs) var(--font-data); color: var(--ink-3); }
+.csv { margin: 0; padding: 14px 16px; font: 400 11.5px/1.55 var(--font-data); white-space: pre; overflow-x: auto; color: var(--ink-2); max-height: 260px; }
+.tx-list { list-style: none; margin: 0; padding: 0; }
+.tx-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 16px; border-bottom: 1px solid var(--rule); font-size: var(--t-sm); }
+.tx-list li:last-child { border-bottom: 0; }
+.tx-list .tname { font: 500 var(--t-sm) var(--font-data); margin-right: auto; }
+.tx-list .undone .tname { text-decoration: line-through; color: var(--ink-3); }
+
+/* rules and config */
+.cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.form { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 10px 16px; padding: 14px 16px 16px; align-items: center; font-size: var(--t-sm); }
+.form label { color: var(--ink-2); }
+.json { margin: 0; padding: 14px 16px; font: 400 12px/1.6 var(--font-data); white-space: pre; overflow-x: auto; background: var(--plate-2); border-top: 1px solid var(--rule); }
+.json .k1 { color: var(--phase-c-ink); } .json .v1 { color: var(--copper); }
+.rules td:first-child { font: 600 var(--t-sm) var(--font-data); }
+.type { font: 600 10px/1 var(--font-body); letter-spacing: .08em; text-transform: uppercase; padding: 3px 6px; border-radius: 3px; background: var(--plate-2); border: 1px solid var(--rule); white-space: nowrap; }
+.type.hard { background: var(--ink); color: var(--plate); border-color: var(--ink); }
+.tests { list-style: none; margin: 0; padding: 6px 16px 14px; display: flex; flex-direction: column; }
+.tests li { display: grid; grid-template-columns: 22px 34px 1fr; gap: 8px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--rule); font-size: var(--t-sm); }
+.tests li:last-child { border-bottom: 0; }
+.tests .pass { color: var(--fix-ink); } .tests .fail { color: var(--alarm); }
+.tests .tid { font: 600 var(--t-xs) var(--font-data); color: var(--ink-3); }
+.tests .detail { display: block; font: 400 11px var(--font-data); color: var(--ink-3); }
+.assume { list-style: none; margin: 0; padding: 8px 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+.assume label { display: grid; grid-template-columns: 20px 1fr; gap: 8px; align-items: start; font-size: var(--t-sm); cursor: pointer; }
+.assume input { margin-top: 3px; }
+
+/* presenter */
+.presenter {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  background: var(--ink); color: var(--plate); border-top: 3px solid var(--copper);
+  padding: 12px clamp(16px, 2.4vw, 28px) calc(12px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 26px rgba(0,0,0,.25);
+}
+.pz { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 24px; align-items: center; max-width: 1400px; margin: 0 auto; }
+.pz-progress { grid-column: 1 / -1; display: flex; gap: 3px; }
+.pz-progress button { flex: 1; height: 5px; border: 0; padding: 0; border-radius: 2px; background: color-mix(in srgb, var(--plate) 22%, transparent); cursor: pointer; }
+.pz-progress button.done { background: var(--copper); }
+.pz-progress button.now { background: var(--copper-hi); }
+.pz-step { font: 500 var(--t-xs)/1 var(--font-data); opacity: .7; margin-bottom: 4px; }
+.pz-title { font: 600 var(--t-lg)/1.15 var(--font-display); letter-spacing: .02em; }
+.pz-caption { font-size: var(--t-base); line-height: 1.5; opacity: .9; margin-top: 4px; max-width: 95ch; }
+.pz-ctl { display: flex; gap: 8px; flex-wrap: wrap; }
+.pz-ctl .btn { background: transparent; color: var(--plate); border-color: color-mix(in srgb, var(--plate) 35%, transparent); }
+.pz-ctl .btn:hover:not(:disabled) { border-color: var(--plate); }
+.pz-ctl .btn-primary { background: var(--copper); border-color: var(--copper); color: #fff; }
+.pz-ctl .btn-primary:hover:not(:disabled) { background: var(--copper-lo); border-color: var(--copper-lo); }
+
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: 50; max-width: min(420px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 6px; background: var(--ink); color: var(--plate); font-size: var(--t-sm); box-shadow: var(--shadow-lift); opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s, transform .2s; }
+.toast.show { opacity: 1; transform: none; }
+body.touring .toast { bottom: 184px; }
+
+/* ---------- responsive */
+@media (max-width: 1280px) {
+  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cmp-grid { grid-template-columns: 1fr 1fr; }
+  .cmp-grid > :first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 1180px) {
+  .ws-grid, .audit-grid, .review-grid, .cfg-grid { grid-template-columns: minmax(0, 1fr); }
+  .ws-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+}
+@media (max-width: 960px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .browser { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; overflow-x: auto; padding-block: 10px; }
+  .pb-head, .activity { display: none; }
+  .pb-level { flex-direction: row; flex: none; gap: 4px; align-items: center; }
+  .pb-level-name { display: none; }
+  .pb-item { width: auto; grid-template-columns: auto auto; }
+  .pb-item .mini { display: none; }
+  .pipeline { margin-left: 0; order: 3; width: 100%; overflow-x: auto; }
+  .top { position: static; }
+  body.touring { padding-bottom: 220px; }
+}
+@media (max-width: 640px) {
+  .view-head h1 { font-size: var(--t-xl); }
+  .cmp-grid, .kpis { grid-template-columns: minmax(0, 1fr); }
+  .cmp-grid > :first-child { grid-column: auto; }
+  .board-frame { min-width: 560px; padding: 8px; }
+  .board-wrap::after { content: "Scroll sideways to see the right-hand column"; display: block; margin-top: 6px; font-size: var(--t-xs); color: var(--ink-3); position: sticky; left: 0; }
+  .board-wrap { padding: 10px; }
+  .brk { gap: 4px; padding-left: 5px; }
+  .brk.R { padding-right: 5px; }
+  .brk-name { font-size: 11px; }
+  .brk-meta { font-size: 10px; }
+  .brk-no { font-size: var(--t-sm); }
+  .brk-lock { width: 20px; height: 20px; }
+  .storey { grid-template-columns: minmax(0, 1fr); }
+  .storey-tag { flex-direction: row; justify-content: flex-start; gap: 8px; align-items: baseline; padding-bottom: 6px; }
+  .pz-ctl .btn { min-height: 32px; padding: 5px 10px; }
+  .pz-title { font-size: var(--t-md); }
+  .phasor-wrap { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .pz { grid-template-columns: minmax(0, 1fr); }
+  .pz-caption { font-size: var(--t-sm); }
+  .form { grid-template-columns: minmax(0, 1fr); }
+  .imb-big { font-size: var(--t-2xl); }
+  .db-row, .db-axis { grid-template-columns: 48px minmax(0, 1fr) 78px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0ms !important; transition-duration: .001ms !important; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="copper" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#8A4D20"/><stop offset=".45" stop-color="#E2A06A"/><stop offset="1" stop-color="#A9622E"/>
+    </linearGradient>
+  </defs>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-change" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></symbol>
+</svg>
+
+<div class="app" id="app">
+  <header class="top" id="top"></header>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Views"></nav>
+  <div class="shell">
+    <aside class="browser" id="browser" aria-label="Project browser"></aside>
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+</div>
+<div class="presenter" id="presenter" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<noscript><p style="padding:24px">This dry run needs JavaScript to simulate the copilot.</p></noscript>
+
+<script>
+/* src/phase_balancer.js */
+/*
+ * Phase balancer core.
+ * Line-for-line JavaScript port of reference/phase_balancer.py (concept document §10).
+ * No DOM, no dependencies: runs in the browser (window.PhaseBalancer) and in Node (require).
+ *
+ * The only addition to the Python is an optional `trace` array on minMoveBalance, which
+ * records each search iteration so the UI can explain what the optimiser did.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.PhaseBalancer = api;
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  const PHASES = ["A", "B", "C"];
+
+  // Circuit: { number, load_va, phases: ["A"] | ["A","B"] | ["A","B","C"], locked }
+  function Circuit(number, load_va, phases, locked = false) {
+    return { number, load_va, phases: phases.slice(), locked: !!locked };
+  }
+
+  function isMovable(c) {
+    return c.phases.length === 1 && !c.locked;
+  }
+
+  function replacePhases(c, phases) {
+    return Object.assign({}, c, { phases: phases.slice() });
+  }
+
+  function samePhases(a, b) {
+    return a.length === b.length && a.every((p, i) => p === b[i]);
+  }
+
+  function phaseLoads(circuits) {
+    const loads = { A: 0.0, B: 0.0, C: 0.0 };
+    for (const c of circuits) {
+      const share = c.load_va / c.phases.length; // multi-pole load splits equally
+      for (const p of c.phases) loads[p] += share;
+    }
+    return loads;
+  }
+
+  function imbalancePct(loads) {
+    const avg = (0 + loads.A + loads.B + loads.C) / 3;
+    if (avg === 0) return 0.0;
+    return Math.max(Math.abs(loads.A - avg), Math.abs(loads.B - avg), Math.abs(loads.C - avg)) / avg * 100;
+  }
+
+  /* Greedy Longest-Processing-Time: biggest movable load to lightest phase.
+     Ignores current positions, so it usually moves many circuits. */
+  function lptBalance(circuits) {
+    const fixed = circuits.filter((c) => !isMovable(c));
+    const movable = circuits.filter(isMovable).sort((a, b) => b.load_va - a.load_va); // stable, like sorted()
+    const loads = phaseLoads(fixed);
+    const result = fixed.slice();
+    for (const c of movable) {
+      let p = PHASES[0];
+      for (const q of PHASES) if (loads[q] < loads[p]) p = q; // min() keeps the first minimum
+      loads[p] += c.load_va;
+      result.push(replacePhases(c, [p]));
+    }
+    return result.sort((a, b) => a.number - b.number);
+  }
+
+  /* Local search starting from the drawn layout. Each step applies the single
+     move or pairwise swap that cuts imbalance the most per circuit renumbered,
+     and stops once the target is met or nothing improves.
+     Returns [circuits, movedSet] like the Python tuple. */
+  function minMoveBalance(circuits, opts) {
+    const o = opts || {};
+    const target_pct = o.target_pct == null ? 5.0 : o.target_pct;
+    const slot_capacity = o.slot_capacity || null;
+    const max_iter = o.max_iter == null ? 50 : o.max_iter;
+    const trace = o.trace || null;
+
+    let cur = new Map(circuits.map((c) => [c.number, c])); // Map keeps insertion order, like dict
+    const moved = new Set();
+
+    const countOn = (phase, state) => {
+      let n = 0;
+      for (const c of state.values()) if (isMovable(c) && c.phases[0] === phase) n++;
+      return n;
+    };
+
+    let stopReason = "iteration limit";
+    for (let iter = 1; iter <= max_iter; iter++) {
+      const loads = phaseLoads(cur.values());
+      const base = imbalancePct(loads);
+      if (base <= target_pct) { stopReason = "target met"; break; }
+      let best = null; // { gain, state, touched, step }
+      const movables = [...cur.values()].filter(isMovable);
+      let evaluatedMoves = 0, evaluatedSwaps = 0, blockedByCapacity = 0;
+      // single moves
+      for (const c of movables) {
+        for (const p of PHASES) {
+          if (p === c.phases[0]) continue;
+          if (slot_capacity && countOn(p, cur) >= slot_capacity[p]) { blockedByCapacity++; continue; }
+          const trial = new Map(cur);
+          trial.set(c.number, replacePhases(c, [p]));
+          evaluatedMoves++;
+          const after = imbalancePct(phaseLoads(trial.values()));
+          const gain = base - after;
+          if (gain > 1e-9 && (best === null || gain > best.gain)) {
+            best = { gain, state: trial, touched: [c.number],
+              step: { kind: "move", numbers: [c.number], from: [c.phases[0]], to: [p], after } };
+          }
+        }
+      }
+      // swaps (keep slot counts unchanged)
+      for (let i = 0; i < movables.length; i++) {
+        for (let j = i + 1; j < movables.length; j++) {
+          const a = movables[i], b = movables[j];
+          if (samePhases(a.phases, b.phases)) continue;
+          const trial = new Map(cur);
+          trial.set(a.number, replacePhases(a, b.phases));
+          trial.set(b.number, replacePhases(b, a.phases));
+          evaluatedSwaps++;
+          const after = imbalancePct(phaseLoads(trial.values()));
+          const gain = (base - after) / 2;
+          if (gain > 1e-9 && (best === null || gain > best.gain)) {
+            best = { gain, state: trial, touched: [a.number, b.number],
+              step: { kind: "swap", numbers: [a.number, b.number], from: [a.phases[0], b.phases[0]], to: [b.phases[0], a.phases[0]], after } };
+          }
+        }
+      }
+      if (best === null) {
+        stopReason = "no improving move";
+        if (trace) trace.push({ iter, before: base, evaluatedMoves, evaluatedSwaps, blockedByCapacity, step: null });
+        break;
+      }
+      if (trace) trace.push({ iter, before: base, evaluatedMoves, evaluatedSwaps, blockedByCapacity, gainPerCircuit: best.gain, step: best.step });
+      cur = best.state;
+      for (const n of best.touched) moved.add(n);
+    }
+    if (stopReason === "iteration limit" && imbalancePct(phaseLoads(cur.values())) <= target_pct) stopReason = "target met";
+    if (trace) trace.stopReason = stopReason;
+
+    const original = new Map(circuits.map((c) => [c.number, c.phases]));
+    const finalMoved = new Set([...moved].filter((n) => !samePhases(cur.get(n).phases, original.get(n))));
+    return [[...cur.values()].sort((a, b) => a.number - b.number), finalMoved];
+  }
+
+  return { PHASES, Circuit, isMovable, phaseLoads, imbalancePct, lptBalance, minMoveBalance };
+});
+
+</script>
+<script>
+/* src/panel_model.js */
+/*
+ * Panel model: the "Revit layer" of the concept (§11), simulated.
+ * Translates a panelboard (slots, poles, locks, spares) into core circuits, runs the core,
+ * and maps the core's phase decisions back onto concrete slots (§11.4).
+ */
+(function (root, factory) {
+  const PB = typeof module === "object" && module.exports ? require("./phase_balancer.js") : root.PhaseBalancer;
+  const api = factory(PB);
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.PanelModel = api;
+})(typeof self !== "undefined" ? self : this, function (PB) {
+  "use strict";
+  const PHASES = PB.PHASES;
+
+  const DEFAULT_CONFIG = {
+    target: 10,                 // imbalance_target_pct
+    basis: "connected",         // balance_basis: connected | demand
+    approach: "min_move",       // default_approach: min_move | lpt
+    maxMoves: 6,                // max_moves_per_panel
+    respectLocks: true,         // respect_locked_slots
+    doNotMoveParam: "DoNotMove",
+    voltage: "400/230",
+    engineer: "Pilot engineer",
+    demandFactors: { LTG: 1.0, REC: 0.8, EQP: 0.75, MECH: 1.0 },
+  };
+
+  const VOLTAGES = {
+    "400/230": { ll: 400, ln: 230, label: "400/230 V 3Φ 4W" },
+    "415/240": { ll: 415, ln: 240, label: "415/240 V 3Φ 4W" },
+    "208/120": { ll: 208, ln: 120, label: "208Y/120 V 3Φ 4W" },
+    "480/277": { ll: 480, ln: 277, label: "480Y/277 V 3Φ 4W" },
+  };
+
+  // §1.1: rows feed A, B, C in sequence; odd slots left, even slots right.
+  function phaseOfSlot(slot) {
+    return PHASES[(Math.ceil(slot / 2) - 1) % 3];
+  }
+  function rowOfSlot(slot) {
+    return Math.ceil(slot / 2);
+  }
+  // A multi-pole breaker occupies consecutive rows in the same column: s, s+2, s+4.
+  function slotsOf(c) {
+    const s = [];
+    for (let k = 0; k < c.poles; k++) s.push(c.slot + 2 * k);
+    return s;
+  }
+  function phasesOf(c) {
+    return slotsOf(c).map(phaseOfSlot);
+  }
+
+  function isLocked(c, cfg) {
+    return !!c.doNotMove || (!!c.lockedSlot && cfg.respectLocks !== false);
+  }
+  function basisVA(c, cfg) {
+    if (c.spare) return 0;
+    if (cfg.basis === "demand") {
+      const f = cfg.demandFactors && cfg.demandFactors[c.cls];
+      return c.va * (f == null ? 1 : f);
+    }
+    return c.va;
+  }
+  function loadCircuits(panel) {
+    return panel.circuits.filter((c) => !c.spare);
+  }
+
+  function toCore(panel, cfg, opts) {
+    const ignoreLocks = opts && opts.ignoreLocks;
+    return loadCircuits(panel)
+      .slice()
+      .sort((a, b) => a.slot - b.slot)
+      .map((c) => PB.Circuit(c.slot, basisVA(c, cfg), phasesOf(c), ignoreLocks ? false : isLocked(c, cfg)));
+  }
+
+  // slot -> circuit, for every slot a circuit (or spare) occupies
+  function occupancy(panel) {
+    const occ = new Map();
+    for (const c of panel.circuits) for (const s of slotsOf(c)) occ.set(s, c);
+    return occ;
+  }
+
+  // R7: spaces (empty) and spares are valid move targets.
+  function freeSlotsByPhase(panel) {
+    const occ = occupancy(panel);
+    const free = { A: [], B: [], C: [] };
+    for (let s = 1; s <= panel.ways; s++) {
+      const c = occ.get(s);
+      if (!c || c.spare) free[phaseOfSlot(s)].push(s);
+    }
+    return free;
+  }
+
+  // R4: 1-pole circuits on a phase cannot exceed the slots that phase can offer them.
+  function slotCapacity(panel, cfg, opts) {
+    const free = freeSlotsByPhase(panel);
+    const cap = { A: free.A.length, B: free.B.length, C: free.C.length };
+    for (const c of toCore(panel, cfg, opts)) if (PB.isMovable(c)) cap[c.phases[0]]++;
+    return cap;
+  }
+
+  function onePoleLoads(panel, cfg) {
+    const L = { A: 0, B: 0, C: 0 };
+    for (const c of loadCircuits(panel)) if (c.poles === 1) L[phaseOfSlot(c.slot)] += basisVA(c, cfg);
+    return L;
+  }
+
+  // Neutral current from 1-pole (L-N) loads at unity power factor. 2- and 3-pole loads add no neutral current.
+  function neutralCurrent(L1p, vln) {
+    const a = L1p.A / vln, b = L1p.B / vln, c = L1p.C / vln;
+    return Math.sqrt(Math.max(0, a * a + b * b + c * c - a * b - b * c - c * a));
+  }
+
+  function audit(panel, cfg) {
+    const core = toCore(panel, cfg);
+    const loads = PB.phaseLoads(core);
+    const imb = PB.imbalancePct(loads);
+    const movable = core.filter(PB.isMovable).length;
+    const lockedCount = loadCircuits(panel).filter((c) => isLocked(c, cfg)).length;
+    const zeroLoad = loadCircuits(panel).filter((c) => !(c.va > 0));
+    let status = imb <= cfg.target ? "ok" : movable === 0 ? "locked" : "over";
+    return { loads, imb, status, movable, lockedCount, zeroLoad, total: loads.A + loads.B + loads.C };
+  }
+
+  /* Map the core's phase decisions onto concrete slots (§11.4).
+     1. A circuit going p→q and another going q→p exchange slots directly (a swap).
+     2. Every other moved circuit takes the lowest-numbered free slot on its new phase.
+     3. A spare displaced from its slot takes over a slot vacated by a moved circuit. */
+  function mapToSlots(panel, newPhase /* Map oldSlot -> phase, for moved circuits only */) {
+    const bySlot = new Map(panel.circuits.map((c) => [c.slot, c]));
+    const moved = [...newPhase.keys()].sort((a, b) => a - b).map((s) => bySlot.get(s));
+    const target = new Map(); // oldSlot -> newSlot
+    const partner = new Map();
+    const unpaired = [];
+    // 1. pair direct swaps
+    for (const x of moved) {
+      if (target.has(x.slot)) continue;
+      const from = phaseOfSlot(x.slot), to = newPhase.get(x.slot);
+      const y = moved.find((m) => m !== x && !target.has(m.slot) && phaseOfSlot(m.slot) === to && newPhase.get(m.slot) === from);
+      if (y) {
+        target.set(x.slot, y.slot); target.set(y.slot, x.slot);
+        partner.set(x.slot, y.slot); partner.set(y.slot, x.slot);
+      }
+    }
+    for (const x of moved) if (!target.has(x.slot)) unpaired.push(x);
+    // 2. pool = free slots (spaces + spares) + slots vacated by unpaired movers
+    const free = freeSlotsByPhase(panel);
+    const pool = { A: free.A.slice(), B: free.B.slice(), C: free.C.slice() };
+    for (const x of unpaired) pool[phaseOfSlot(x.slot)].push(x.slot);
+    for (const p of PHASES) pool[p].sort((a, b) => a - b);
+    const used = new Set();
+    const errors = [];
+    for (const x of unpaired) {
+      const to = newPhase.get(x.slot);
+      const s = pool[to].find((k) => !used.has(k) && k !== x.slot);
+      if (s == null) { errors.push(`No free slot on phase ${to} for circuit ${x.slot}`); continue; }
+      used.add(s);
+      target.set(x.slot, s);
+    }
+    // 3. displaced spares move into vacated slots that nobody reused
+    const occ = occupancy(panel);
+    const vacated = unpaired.map((x) => x.slot).filter((s) => !used.has(s)).sort((a, b) => a - b);
+    const spareMoves = [];
+    for (const s of [...used].sort((a, b) => a - b)) {
+      const o = occ.get(s);
+      if (o && o.spare) {
+        const dest = vacated.shift();
+        if (dest == null) { errors.push(`No slot left for displaced spare ${s}`); continue; }
+        spareMoves.push({ fromSlot: s, toSlot: dest });
+        target.set(s, dest);
+      }
+    }
+    const changes = moved.filter((x) => target.has(x.slot)).map((x) => ({
+      id: x.id, name: x.name, va: x.va, cls: x.cls, sheets: x.sheets || [],
+      fromSlot: x.slot, toSlot: target.get(x.slot),
+      fromPhase: phaseOfSlot(x.slot), toPhase: phaseOfSlot(target.get(x.slot)),
+      kind: partner.has(x.slot) ? "swap" : "move",
+      partnerSlot: partner.get(x.slot) || null,
+    }));
+    const circuits = panel.circuits.map((c) => (target.has(c.slot) ? Object.assign({}, c, { slot: target.get(c.slot) }) : Object.assign({}, c)));
+    return { changes, spareMoves, circuits, errors };
+  }
+
+  function bestEffortReason(panel, cfg, afterImb) {
+    // Would the target be reachable if locks were ignored? Then locks are the limiting factor.
+    const unlocked = toCore(panel, cfg, { ignoreLocks: true });
+    const [res] = PB.minMoveBalance(unlocked, { target_pct: cfg.target, slot_capacity: slotCapacity(panel, cfg, { ignoreLocks: true }) });
+    const unlockedImb = PB.imbalancePct(PB.phaseLoads(res));
+    const hasLocks = loadCircuits(panel).some((c) => isLocked(c, cfg));
+    if (hasLocks && unlockedImb <= cfg.target) {
+      return { status: "locked", reason: `Locked circuits block the fix. Without locks the panel could reach ${unlockedImb.toFixed(1)}%.` };
+    }
+    const biggest = loadCircuits(panel).filter((c) => c.poles === 1).sort((a, b) => b.va - a.va)[0];
+    if (biggest) {
+      const others = loadCircuits(panel).reduce((s, c) => s + basisVA(c, cfg), 0) - basisVA(biggest, cfg);
+      if (basisVA(biggest, cfg) > others / 2) {
+        return { status: "needs", reason: `Circuit ${biggest.slot} (${Math.round(biggest.va).toLocaleString("en-GB")} VA) outweighs what the other two phases can offset. Best achievable is ${afterImb.toFixed(1)}%.` };
+      }
+    }
+    return { status: "needs", reason: `No further move or swap improves balance. Best achievable is ${afterImb.toFixed(1)}%.` };
+  }
+
+  function propose(panel, cfg, approach) {
+    const appr = approach || cfg.approach;
+    const core = toCore(panel, cfg);
+    const before = PB.phaseLoads(core);
+    const beforeImb = PB.imbalancePct(before);
+    const cap = slotCapacity(panel, cfg);
+    const trace = [];
+    let result, movedSet;
+    if (appr === "lpt") {
+      result = PB.lptBalance(core);
+      const orig = new Map(core.map((c) => [c.number, c.phases.join("")]));
+      movedSet = new Set(result.filter((c) => c.phases.join("") !== orig.get(c.number)).map((c) => c.number));
+      trace.stopReason = "LPT assigns every movable circuit from scratch";
+    } else {
+      [result, movedSet] = PB.minMoveBalance(core, { target_pct: cfg.target, slot_capacity: cap, trace });
+    }
+    const after = PB.phaseLoads(result);
+    const afterImb = PB.imbalancePct(after);
+    const newPhase = new Map();
+    for (const c of result) if (movedSet.has(c.number)) newPhase.set(c.number, c.phases[0]);
+    const mapped = mapToSlots(panel, newPhase);
+
+    // §11.4 read-back: recompute loads from the mapped slot layout and compare with the core's prediction.
+    const readBack = PB.phaseLoads(toCore({ ways: panel.ways, circuits: mapped.circuits }, cfg));
+    const readBackOk = PHASES.every((p) => Math.abs(readBack[p] - after[p]) <= 1) && mapped.errors.length === 0;
+
+    const reached = afterImb <= cfg.target;
+    let status, reason = "";
+    if (beforeImb <= cfg.target && appr !== "lpt") { status = "ok"; reason = "Already within target. No changes proposed."; }
+    else if (!readBackOk) { status = "needs"; reason = mapped.errors[0] || "Slot read-back did not match the prediction, so the proposal was rolled back."; }
+    else if (reached) { status = "proposed"; }
+    else ({ status, reason } = bestEffortReason(panel, cfg, afterImb));
+
+    const warnings = [];
+    if (mapped.changes.length > cfg.maxMoves) warnings.push(`This proposal renumbers ${mapped.changes.length} circuits, above the firm limit of ${cfg.maxMoves} per panel.`);
+    const issued = new Set();
+    for (const ch of mapped.changes) for (const sh of ch.sheets) if (sh.issued) issued.add(sh.id);
+    if (issued.size) warnings.push(`Moved circuits are tagged on issued sheet${issued.size > 1 ? "s" : ""} ${[...issued].join(", ")}. Cloud the revision before re-issue.`);
+
+    return {
+      approach: appr, target: cfg.target, basis: cfg.basis,
+      before, beforeImb, after, afterImb, reached, status, reason, warnings,
+      changes: mapped.changes, spareMoves: mapped.spareMoves, newCircuits: mapped.circuits,
+      trace, readBack, readBackOk, slotCapacity: cap,
+    };
+  }
+
+  return {
+    DEFAULT_CONFIG, VOLTAGES, phaseOfSlot, rowOfSlot, slotsOf, phasesOf, isLocked, basisVA,
+    toCore, occupancy, freeSlotsByPhase, slotCapacity, onePoleLoads, neutralCurrent, audit, mapToSlots, propose,
+  };
+});
+
+</script>
+<script>
+/* src/sample_project.js */
+/*
+ * Sample pilot model: 12 three-phase four-wire panelboards across five levels.
+ * Fictional data for the dry run. Each panel exercises one behaviour from the test plan (§15).
+ * LP-2A reproduces the worked example in §9 exactly.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.SampleProject = api;
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  const SHEETS = {
+    "E-211": { id: "E-211", title: "Level 01 small power", issued: false, rev: "P02" },
+    "E-311": { id: "E-311", title: "Level 01 lighting", issued: false, rev: "P02" },
+    "E-221": { id: "E-221", title: "Level 02 small power", issued: true, rev: "P03" },
+    "E-321": { id: "E-321", title: "Level 02 lighting", issued: true, rev: "P03" },
+    "E-231": { id: "E-231", title: "Level 03 small power", issued: true, rev: "P03" },
+    "E-331": { id: "E-331", title: "Level 03 lighting", issued: false, rev: "P02" },
+    "E-241": { id: "E-241", title: "Level 04 small power", issued: false, rev: "P01" },
+    "E-341": { id: "E-341", title: "Level 04 lighting", issued: false, rev: "P01" },
+    "E-251": { id: "E-251", title: "Roof plant power", issued: false, rev: "P01" },
+    "E-601": { id: "E-601", title: "Schematic and panel schedules", issued: true, rev: "P03" },
+  };
+
+  const LEVEL_CODE = { "Level 01": "1", "Level 02": "2", "Level 03": "3", "Level 04": "4", "Roof": "5" };
+
+  function sheetsFor(level, cls) {
+    const n = LEVEL_CODE[level];
+    const plan = cls === "LTG" ? `E-3${n}1` : `E-2${n}1`;
+    return [SHEETS[plan] || SHEETS[`E-2${n}1`], SHEETS["E-601"]].filter(Boolean);
+  }
+
+  // c(slot, va, name, cls, extra)  — 1-pole unless extra.poles says otherwise
+  function c(slot, va, name, cls, extra) {
+    return Object.assign({ slot, va, name, cls, poles: 1 }, extra || {});
+  }
+  const spare = (slot) => ({ slot, va: 0, name: "Spare", cls: "REC", poles: 1, spare: true });
+
+  const panels = [
+    {
+      name: "LP-1A", level: "Level 01", use: "Lighting", ways: 18, main: "63 A MCB", fedFrom: "MDB-01 · F-01",
+      circuits: [
+        c(1, 1600, "Lighting – Entrance lobby", "LTG"),
+        c(3, 1500, "Lighting – Corridor L01", "LTG"),
+        c(5, 1600, "Lighting – Reception", "LTG"),
+        c(7, 900, "Emergency lighting L01", "LTG", { lockedSlot: true }),
+        c(9, 1100, "Lighting – Toilets L01", "LTG"),
+        c(11, 1200, "Façade lighting", "LTG"),
+        c(13, 600, "Exit signs L01", "LTG", { lockedSlot: true }),
+        c(15, 500, "Lighting – Stair 1", "LTG"),
+        spare(17),
+      ],
+    },
+    {
+      name: "PP-1A", level: "Level 01", use: "Small power", ways: 30, main: "125 A MCCB", fedFrom: "MDB-01 · F-02",
+      circuits: [
+        c(1, 9000, "Lift 1 controller", "EQP", { poles: 3 }),
+        c(2, 4000, "Water heater WH-01 (400 V)", "EQP", { poles: 2 }),
+        c(6, 1800, "Receptacles – Retail unit 1", "REC"),
+        c(7, 1500, "Receptacles – Lobby", "REC"),
+        c(8, 1700, "Vending machines", "EQP"),
+        c(9, 900, "Receptacles – Security desk", "REC"),
+        c(10, 1600, "Receptacles – Retail unit 2", "REC"),
+        c(11, 1200, "Hand dryers L01", "EQP"),
+        spare(12),
+        c(13, 1400, "Coffee point", "EQP"),
+        spare(14),
+        c(15, 600, "Receptacles – Cleaners store", "REC"),
+        c(17, 1000, "Receptacles – Loading bay", "REC"),
+        c(19, 800, "Roller shutter RS-1", "EQP"),
+      ],
+    },
+    {
+      name: "MP-1", level: "Level 01", use: "Mechanical", ways: 18, main: "160 A MCCB", fedFrom: "MDB-01 · F-03",
+      circuits: [
+        c(1, 7500, "Chilled water pump CHWP-1", "MECH", { poles: 3 }),
+        c(2, 7500, "Chilled water pump CHWP-2", "MECH", { poles: 3 }),
+        c(7, 5500, "Booster set BS-1", "MECH", { poles: 3 }),
+        c(8, 3000, "Sump pump SP-1", "MECH", { poles: 3 }),
+        c(13, 2200, "Sprinkler jockey pump", "MECH", { poles: 3 }),
+      ],
+    },
+    {
+      name: "LP-2A", level: "Level 02", use: "Lighting & receptacles", ways: 24, main: "63 A MCB", fedFrom: "MDB-01 · F-04",
+      note: "Worked example from §9 of the concept document",
+      noteDetail: "Nine circuits drawn in modelling order down the left-hand column, slots 1–17, so their phases rotate A, B, C. Circuit number equals slot number (§1.1).",
+      circuits: [
+        c(1, 2400, "Lighting – Open office east", "LTG"),
+        c(3, 1800, "Lighting – Open office west", "LTG"),
+        c(5, 1500, "Receptacles – Bay 1", "REC"),
+        c(7, 1500, "Receptacles – Bay 2", "REC"),
+        c(9, 1200, "Lighting – Meeting rooms", "LTG"),
+        c(11, 1000, "Receptacles – Meeting rooms", "REC"),
+        c(13, 900, "Receptacles – Bay 3", "REC"),
+        c(15, 800, "Lighting – Corridor L02", "LTG"),
+        c(17, 600, "Receptacles – Copy room", "REC"),
+      ],
+    },
+    {
+      name: "RP-2B", level: "Level 02", use: "Receptacles", ways: 18, main: "63 A MCB", fedFrom: "MDB-01 · F-05",
+      note: "Every phase C slot is full, so the copilot can only swap onto C",
+      circuits: [
+        c(1, 1800, "Receptacles – Bay 4", "REC"),
+        c(2, 1500, "Receptacles – Bay 5", "REC"),
+        c(3, 1400, "Receptacles – Bay 7", "REC"),
+        c(4, 1200, "Receptacles – Bay 8", "REC"),
+        c(5, 600, "Floor boxes – Zone 1", "REC"),
+        c(6, 650, "Floor boxes – Zone 2", "REC"),
+        c(7, 1200, "Printer hub", "EQP"),
+        c(8, 1000, "Receptacles – Bay 6", "REC"),
+        c(9, 1500, "Receptacles – Pantry", "REC"),
+        c(10, 600, "Water boiler", "EQP"),
+        c(11, 700, "Floor boxes – Zone 3", "REC"),
+        c(12, 900, "AV rack – Boardroom", "EQP"),
+        c(17, 800, "Comms outlets L02", "REC"),
+        c(18, 650, "Cleaner sockets L02", "REC"),
+      ],
+    },
+    {
+      name: "LP-2C", level: "Level 02", use: "Lighting", ways: 18, main: "40 A MCB", fedFrom: "MDB-01 · F-06",
+      circuits: [
+        c(1, 1400, "Lighting – Atrium", "LTG"),
+        c(2, 300, "Exit signs L02", "LTG", { lockedSlot: true }),
+        c(3, 1300, "Lighting – Lift lobby L02", "LTG"),
+        c(5, 3000, "Atrium heater AH-1 (400 V)", "EQP", { poles: 2 }),
+        c(9, 1100, "Lighting – Breakout", "LTG"),
+        c(11, 900, "Lighting – Toilets L02", "LTG"),
+        spare(13),
+        c(15, 700, "Lighting – Stair 2", "LTG"),
+        c(17, 600, "Feature lighting – Atrium", "LTG"),
+      ],
+    },
+    {
+      name: "LP-3C", level: "Level 03", use: "Lighting & receptacles", ways: 24, main: "63 A MCB", fedFrom: "MDB-01 · F-07",
+      note: "Two circuits flagged DoNotMove; the copilot has to work around them",
+      circuits: [
+        c(1, 2200, "Lighting – Studio north", "LTG", { doNotMove: true }),
+        c(2, 1600, "Receptacles – Studio north", "REC"),
+        c(3, 900, "Lighting – Studio south", "LTG"),
+        c(4, 1300, "Receptacles – Plotter room", "EQP"),
+        c(5, 1200, "Receptacles – Quiet room", "REC"),
+        c(6, 1000, "Lighting – Corridor L03", "LTG"),
+        c(7, 1100, "Receptacles – Kitchenette L03", "EQP"),
+        c(9, 1800, "Receptacles – Model shop", "REC", { doNotMove: true }),
+        c(11, 800, "Lighting – Toilets L03", "LTG"),
+        c(13, 600, "Lighting – Library", "LTG"),
+        c(15, 500, "Exit signs L03", "LTG", { lockedSlot: true }),
+        spare(17),
+      ],
+    },
+    {
+      name: "PP-3A", level: "Level 03", use: "Small power", ways: 18, main: "80 A MCCB", fedFrom: "MDB-01 · F-08",
+      note: "One very large single-pole load dominates the panel",
+      circuits: [
+        c(1, 3700, "Server rack UPS – Comms room", "EQP"),
+        c(3, 1400, "Receptacles – Comms room", "REC"),
+        c(5, 1300, "Receptacles – Print room", "REC"),
+        c(7, 700, "Receptacles – Store L03", "REC"),
+        c(9, 600, "Hand dryers L03", "EQP"),
+        c(11, 1200, "Receptacles – Riser cupboard", "REC"),
+        c(13, 500, "Receptacles – Cleaners L03", "REC"),
+        spare(15),
+      ],
+    },
+    {
+      name: "LP-3B", level: "Level 03", use: "Lighting", ways: 18, main: "40 A MCB", fedFrom: "MDB-01 · F-09",
+      note: "One circuit has no load assigned in the model",
+      circuits: [
+        c(1, 1300, "Lighting – Open office L03", "LTG"),
+        c(3, 1200, "Lighting – Meeting suite", "LTG"),
+        c(5, 1250, "Lighting – Collaboration zone", "LTG"),
+        c(7, 0, "Display lighting – Gallery", "LTG"),
+        c(9, 300, "Lighting – Stair 3", "LTG"),
+        c(11, 450, "Exit signs L03 east", "LTG", { lockedSlot: true }),
+        c(13, 350, "Lighting – Plant room L03", "LTG"),
+        spare(15),
+      ],
+    },
+    {
+      name: "LP-4A", level: "Level 04", use: "Lab lighting & power", ways: 18, main: "63 A MCB", fedFrom: "MDB-01 · F-10",
+      note: "The heavy circuits are locked, so balance is limited by the locks",
+      circuits: [
+        c(1, 1500, "Fume cupboard controls", "EQP", { lockedSlot: true }),
+        c(2, 600, "Lighting – Lab 1", "LTG"),
+        c(3, 1100, "Lighting – Lab 2", "LTG"),
+        c(5, 900, "Lighting – Prep room", "LTG"),
+        c(7, 1000, "Lab benches – Row 2", "REC", { doNotMove: true }),
+        c(9, 500, "Exit signs L04", "LTG"),
+        c(11, 700, "Lighting – Lab corridor", "LTG"),
+      ],
+    },
+    {
+      name: "LP-4B", level: "Level 04", use: "Lighting & receptacles", ways: 18, main: "63 A MCB", fedFrom: "MDB-01 · F-11",
+      circuits: [
+        c(1, 1500, "Lighting – Workspace L04", "LTG"),
+        c(3, 1400, "Lighting – Meeting rooms L04", "LTG"),
+        c(5, 1100, "Lighting – Corridor L04", "LTG"),
+        c(7, 1200, "Receptacles – Hot desks", "REC"),
+        c(9, 1300, "Receptacles – Meeting rooms L04", "REC"),
+        c(11, 1100, "Receptacles – Kitchenette L04", "EQP"),
+        c(13, 700, "Receptacles – Phone booths", "REC"),
+        spare(15),
+        c(17, 600, "Receptacles – Reprographics", "REC"),
+      ],
+    },
+    {
+      name: "PP-R1", level: "Roof", use: "Plant power", ways: 24, main: "200 A MCCB", fedFrom: "MDB-01 · F-12",
+      circuits: [
+        c(1, 18000, "Air handling unit AHU-1", "MECH", { poles: 3 }),
+        c(2, 11000, "Condensing unit CU-1", "MECH", { poles: 3 }),
+        c(7, 3200, "Kitchen extract fan KEF-1 (400 V)", "MECH", { poles: 2 }),
+        c(8, 1200, "Roof lighting & beacons", "LTG"),
+        c(10, 900, "Plant room receptacles", "REC"),
+        c(11, 1200, "BMS panel – Roof", "EQP"),
+        c(12, 1100, "Trace heating – Roof", "EQP"),
+        c(13, 1400, "Façade maintenance unit", "EQP"),
+        spare(14),
+        c(16, 800, "Lift motor room lighting", "LTG"),
+      ],
+    },
+  ];
+
+  function build() {
+    return panels.map((p, i) => ({
+      id: p.name,
+      name: p.name, level: p.level, use: p.use, ways: p.ways, main: p.main, fedFrom: p.fedFrom, note: p.note || "", noteDetail: p.noteDetail || "",
+      circuits: p.circuits.map((cc, k) => Object.assign({ id: `${p.name}#${k}`, lockedSlot: false, doNotMove: false, spare: false },
+        cc, { sheets: cc.spare ? [] : sheetsFor(p.level, cc.cls) })),
+    }));
+  }
+
+  return {
+    project: { number: "PRJ-2471", name: "Sample office and lab building", stage: "RIBA Stage 4 · Technical design" },
+    levels: ["Roof", "Level 04", "Level 03", "Level 02", "Level 01"],
+    sheets: SHEETS,
+    build,
+  };
+});
+
+</script>
+<script>
+/* src/app.js */
+/*
+ * Phase-Balancing Copilot · dry-run simulator UI.
+ * Vanilla JavaScript, no build step. All numbers come from src/phase_balancer.js (the core)
+ * and src/panel_model.js (the simulated Revit layer); this file only orchestrates and draws.
+ */
+(function () {
+  "use strict";
+  const PB = window.PhaseBalancer, PM = window.PanelModel, SP = window.SampleProject;
+  const PHASES = PB.PHASES;
+
+  // ---------------------------------------------------------------- helpers
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (n) => Math.round(n).toLocaleString("en-GB");
+  const pct = (x) => `${(Math.round(x * 10) / 10).toFixed(1)}%`;
+  const amp = (va) => (va / PM.VOLTAGES[S.cfg.voltage].ln).toFixed(1);
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const icon = (id, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  const isoMin = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const hms = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const reduced = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+  };
+  const CLS = { LTG: "Lighting", REC: "Receptacles", EQP: "Equipment", MECH: "Mechanical" };
+  const STATUS = {
+    unknown: { label: () => "Not audited", icon: "dot" },
+    ok: { label: () => `Within ${S.cfg.target}%`, icon: "check" },
+    over: { label: () => `Over ${S.cfg.target}%`, icon: "alert" },
+    proposed: { label: () => "Proposal ready", icon: "bolt" },
+    accepted: { label: () => "Accepted", icon: "check" },
+    applied: { label: () => "Applied", icon: "check" },
+    rejected: { label: () => "Rejected", icon: "x" },
+    needs: { label: () => "Needs engineer", icon: "alert" },
+    locked: { label: () => "Locked-limited", icon: "lock" },
+  };
+  const chip = (st) => `<span class="chip chip-${st}">${icon(STATUS[st].icon)}${STATUS[st].label()}</span>`;
+  const FFL = { "Roof": "+17.60", "Level 04": "+13.20", "Level 03": "+8.80", "Level 02": "+4.40", "Level 01": "±0.00" };
+  const STEPS = ["Audit", "Optimise", "Propose", "Review", "Apply & report"];
+
+  // ---------------------------------------------------------------- state
+  const S = {
+    cfg: clone(PM.DEFAULT_CONFIG),
+    panels: [], view: "audit", sel: "LP-2A", selCircuit: null,
+    boardMode: "drawn", boardStyle: "board",
+    log: [], activity: [], tx: [],
+    compare: "LP-2A", sort: { key: "imb", dir: -1 },
+    tour: { on: false, i: 0, auto: false, timer: null },
+    anim: {}, designSeq: 0, viz: {}, tests: null,
+    // CSV saving: "local" = plain browser download (opened as a file or self-hosted);
+    // "pending"/"ok"/"none" = inside the claude.ai viewer, which offers files through its downloads capability.
+    dl: window.claude && typeof window.claude.use === "function" ? "pending" : "local", dlNs: null,
+  };
+
+  function resetProject() {
+    S.panels = SP.build().map((p) => Object.assign(p, { audit: null, proposal: null, review: null }));
+    S.log = []; S.activity = []; S.tx = []; S.selCircuit = null; S.boardMode = "drawn"; S.designSeq = 0; S.viz = {};
+  }
+  const panel = (id) => S.panels.find((p) => p.id === id);
+  // Loads and layout only: flagging a lock is not a model change the audit needs to re-read.
+  const modelSig = (p) => p.circuits.map((c) => `${c.slot}:${c.va}:${c.poles}`).join("|");
+  const live = (p) => PM.audit(p, S.cfg);
+  const isStale = (p) => !!p.audit && p.audit.sig !== modelSig(p);
+
+  function activity(text, kind) { S.activity.unshift({ t: new Date(), text, kind: kind || "info" }); S.activity.length = Math.min(S.activity.length, 80); }
+
+  // keepBaseline: re-read after an apply keeps the imbalance found by the last audit run, so charts can show before and after.
+  function snapshot(p, keepBaseline) {
+    const a = live(p);
+    const baseline = keepBaseline && p.audit ? p.audit.baseline : a.imb;
+    p.audit = { imb: a.imb, baseline, loads: a.loads, movable: a.movable, zero: a.zeroLoad.length, sig: modelSig(p), at: new Date() };
+  }
+  function auditStatus(p) {
+    if (!p.audit) return "unknown";
+    if (p.audit.imb <= S.cfg.target) return "ok";
+    return p.audit.movable === 0 ? "locked" : "over";
+  }
+  function panelStatus(p) {
+    if (p.review === "applied") return "applied";
+    const pr = p.proposal;
+    if (pr) {
+      if (p.review === "rejected") return "rejected";
+      if (pr.status === "proposed") return p.review === "accepted" ? "accepted" : "proposed";
+      if (pr.status === "ok") return auditStatus(p) === "unknown" ? "ok" : auditStatus(p);
+      return pr.status;
+    }
+    return auditStatus(p);
+  }
+  function auditSummary() {
+    const audited = S.panels.filter((p) => p.audit);
+    if (!audited.length) return null;
+    const over = audited.filter((p) => p.audit.imb > S.cfg.target);
+    const worst = audited.slice().sort((a, b) => b.audit.imb - a.audit.imb)[0];
+    return { n: audited.length, over: over.length, worst };
+  }
+
+  // ---------------------------------------------------------------- actions
+  function runAudit(animate) {
+    S.panels.forEach(snapshot);
+    activity(`Audit started · ${S.panels.length} panels · target ${S.cfg.target}% · ${S.cfg.basis} VA`);
+    for (const p of S.panels) {
+      const st = auditStatus(p);
+      if (st !== "ok") activity(`${p.name} at ${pct(p.audit.imb)} · ${STATUS[st].label()}`, "alarm");
+      if (p.audit.zero) activity(`${p.name}: ${plural(p.audit.zero, "circuit")} with no load set. Check the family data.`, "warn");
+    }
+    const s = auditSummary();
+    activity(`${s.n} panels checked · ${s.over} above ${S.cfg.target}% · worst: ${s.worst.name} at ${pct(s.worst.audit.imb)}`, "ok");
+    if (animate) S.anim.audit = true;
+  }
+
+  function propose(p, approach, opts) {
+    const o = opts || {};
+    const pr = PM.propose(p, S.cfg, approach || S.cfg.approach);
+    pr.sig = modelSig(p);
+    p.proposal = pr; p.review = null;
+    if (!o.quiet) {
+      if (pr.status === "proposed") activity(`${p.name}: ${pr.approach === "lpt" ? "fresh layout" : "minimum-move"} proposal · ${plural(pr.changes.length, "circuit")} renumbered · ${pct(pr.beforeImb)} → ${pct(pr.afterImb)}`, "ok");
+      else if (pr.status === "ok") activity(`${p.name}: within target at ${pct(pr.beforeImb)}. No changes proposed.`);
+      else activity(`${p.name}: ${STATUS[pr.status].label()}. ${pr.reason}`, "warn");
+    }
+    if (o.log && (pr.status === "needs" || pr.status === "locked")) logEntry(p, pr, pr.status === "locked" ? "Locked-limited" : "Needs engineer");
+    return pr;
+  }
+
+  function balanceAllFlagged() {
+    const flagged = S.panels.filter((p) => p.review !== "applied" && ["over", "locked"].includes(auditStatus(p)));
+    activity(`Batch run on ${plural(flagged.length, "flagged panel")} · ${S.cfg.approach === "lpt" ? "fresh layout" : "minimum moves"}`);
+    flagged.forEach((p) => propose(p, S.cfg.approach, { log: true }));
+    return flagged;
+  }
+
+  function logEntry(p, pr, status) {
+    S.log.push({
+      timestamp: isoMin(new Date()), project: SP.project.number, panel: p.name, basis: pr.basis,
+      LA_before: Math.round(pr.before.A), LB_before: Math.round(pr.before.B), LC_before: Math.round(pr.before.C),
+      imbalance_before_pct: pr.beforeImb.toFixed(1),
+      LA_after: Math.round(pr.after.A), LB_after: Math.round(pr.after.B), LC_after: Math.round(pr.after.C),
+      imbalance_after_pct: pr.afterImb.toFixed(1),
+      circuits_moved: pr.changes.length,
+      changes: pr.changes.map((c) => `${c.fromSlot}:${c.fromPhase}→${c.toPhase}(slot ${c.fromSlot}→${c.toSlot})`).join("; "),
+      status, engineer: S.cfg.engineer, approach: pr.approach,
+    });
+  }
+
+  function review(p, decision) {
+    if (!p.proposal) return;
+    p.review = decision;
+    if (decision === "rejected") { logEntry(p, p.proposal, "Rejected"); activity(`${p.name}: proposal rejected by ${S.cfg.engineer}`, "warn"); }
+    else activity(`${p.name}: proposal accepted, waiting to apply`, "ok");
+  }
+
+  function apply(p, group) {
+    const pr = p.proposal;
+    if (!pr || !pr.changes.length) return false;
+    const prev = clone(p.circuits);
+    p.circuits = clone(pr.newCircuits);
+    const back = live(p).loads;
+    if (!PHASES.every((ph) => Math.abs(back[ph] - pr.after[ph]) <= 1)) {
+      p.circuits = prev;
+      activity(`${p.name}: read-back did not match the prediction. Transaction rolled back.`, "alarm");
+      return false;
+    }
+    const name = `Phase Balancer – ${p.name}`;
+    S.tx.unshift({ id: `tx${Date.now()}${Math.random().toString(16).slice(2, 6)}`, name, group: group || null, panelId: p.id, prev, changes: pr.changes.length, at: new Date(), undone: false });
+    p.review = "applied";
+    snapshot(p, true);
+    logEntry(p, pr, "Applied");
+    activity(`Transaction "${name}" committed · ${plural(pr.changes.length, "circuit")} renumbered · read-back within ±1 VA`, "ok");
+    return true;
+  }
+  function applyAccepted() {
+    const acc = S.panels.filter((p) => p.review === "accepted" && p.proposal);
+    if (!acc.length) return 0;
+    const group = `Phase Balancer – batch of ${plural(acc.length, "panel")}`;
+    activity(`Transaction group "${group}" started`);
+    let n = 0;
+    for (const p of acc) if (apply(p, group)) n++;
+    return n;
+  }
+  function undo(txId) {
+    const t = S.tx.find((x) => x.id === txId);
+    if (!t || t.undone) return;
+    const p = panel(t.panelId);
+    p.circuits = clone(t.prev); t.undone = true;
+    const lastApplied = [...S.log].reverse().find((r) => r.panel === p.name && r.status === "Applied");
+    if (lastApplied) S.log.push(Object.assign({}, lastApplied, { timestamp: isoMin(new Date()), status: "Undone" }));
+    p.review = null; p.proposal = null; snapshot(p, true);
+    activity(`Undo "${t.name}" · original layout restored`, "warn");
+  }
+
+  function modelChanged(p) {
+    p.proposal = null; p.review = null;
+    if (S.sel === p.id) S.boardMode = "drawn";
+  }
+
+  const DESIGN_CHANGES = [
+    { kind: "Equipment swap", delta: 1400 },
+    { kind: "Receptacles added", delta: 700 },
+    { kind: "Fixture wattage revised", delta: -300 },
+  ];
+  function simulateDesignChange(p) {
+    const cands = p.circuits.filter((c) => !c.spare && c.poles === 1);
+    if (!cands.length) return null;
+    const c = cands[(S.designSeq * 5 + 2) % cands.length];
+    const ch = DESIGN_CHANGES[S.designSeq % DESIGN_CHANGES.length];
+    S.designSeq++;
+    const old = c.va;
+    c.va = Math.max(100, c.va + ch.delta);
+    modelChanged(p);
+    activity(`${p.name}: ${ch.kind.toLowerCase()} on circuit ${c.slot} "${c.name}" ${fmt(old)} → ${fmt(c.va)} VA`, "warn");
+    return { c, old, ch };
+  }
+
+  function toggleLock(p, cid) {
+    const c = p.circuits.find((x) => x.id === cid);
+    if (!c || c.spare || c.poles > 1) return;
+    const had = p.proposal && p.review !== "applied" ? p.proposal.approach : null;
+    if (c.lockedSlot && S.cfg.respectLocks) { c.lockedSlot = false; c.doNotMove = false; }
+    else c.doNotMove = !c.doNotMove;
+    const locked = PM.isLocked(c, S.cfg);
+    activity(`${p.name}: circuit ${c.slot} "${c.name}" ${locked ? "flagged DoNotMove" : "unlocked"}`);
+    modelChanged(p);
+    if (had) { propose(p, had); return true; }
+    return false;
+  }
+
+  function configChanged() {
+    for (const p of S.panels) {
+      if (p.audit && !isStale(p)) snapshot(p);
+      if (p.proposal && p.review !== "applied") propose(p, p.proposal.approach, { quiet: true });
+    }
+  }
+
+  // ---------------------------------------------------------------- rendering
+  function render() {
+    const focusId = document.activeElement && document.activeElement.id;
+    const bScroll = $("#browser").scrollTop;
+    $("#top").innerHTML = viewTop();
+    $("#tabs").innerHTML = viewTabs();
+    $("#browser").innerHTML = viewBrowser();
+    $("#browser").scrollTop = bScroll;
+    const main = $("#main");
+    main.innerHTML = (VIEWS[S.view] || VIEWS.audit)();
+    main.dataset.view = S.view;
+    const pz = $("#presenter");
+    pz.hidden = !S.tour.on;
+    pz.innerHTML = S.tour.on ? viewPresenter() : "";
+    document.body.classList.toggle("touring", S.tour.on);
+    if (focusId) { const el = document.getElementById(focusId); if (el) el.focus({ preventScroll: true }); }
+    afterRender();
+    S.anim = {};
+  }
+
+  function pipelineState() {
+    if (S.tour.on) return { now: SCENES[S.tour.i].step, done: SCENES[S.tour.i].step - 1 };
+    let done = 0;
+    if (S.panels.some((p) => p.audit)) done = 1;
+    if (S.panels.some((p) => p.proposal)) done = 3;
+    const pend = S.panels.filter((p) => p.proposal && p.proposal.status === "proposed" && !p.review);
+    if (done === 3 && !pend.length) done = 4;
+    if (S.tx.some((t) => !t.undone)) done = 5;
+    return { now: Math.min(done + 1, 5), done };
+  }
+
+  function viewTop() {
+    const ps = pipelineState();
+    const steps = STEPS.map((s, i) => {
+      const n = i + 1;
+      const cls = n <= ps.done ? "done" : n === ps.now ? "now" : "";
+      return `<li class="${cls}">${i ? `<span class="wire ${n <= ps.done ? "done" : ""}" style="order:-1"></span>` : ""}${s}</li>`;
+    }).join("");
+    return `
+      <div class="brand">
+        <span class="plate plate-lg">Phase-Balancing Copilot</span>
+        <div class="brand-meta">
+          <span><b>${SP.project.number}</b> · ${esc(SP.project.name)}</span>
+          <span class="dry">Dry run on sample data · no Revit connection</span>
+        </div>
+      </div>
+      <ol class="pipeline" aria-label="Copilot pipeline">${steps}</ol>
+      <div class="top-actions">
+        ${S.tour.on ? "" : `<button class="btn btn-ink" data-act="tour-start">${icon("play")} Guided dry run</button>`}
+        <button class="icon-btn" data-act="reset" title="Reset the sample model" aria-label="Reset the sample model">${icon("reset")}</button>
+        <button class="icon-btn" data-act="theme" title="Switch light or dark" aria-label="Switch light or dark">${icon("theme")}</button>
+      </div>`;
+  }
+
+  function viewTabs() {
+    const acc = S.panels.filter((p) => p.review === "accepted").length;
+    const tabs = [
+      ["audit", "Project audit", ""],
+      ["workspace", "Panel workspace", S.sel],
+      ["compare", "Approach comparison", ""],
+      ["report", "Report & log", S.log.length ? String(S.log.length) : ""],
+      ["rules", "Rules & config", ""],
+    ];
+    return tabs.map(([id, label, count]) => `<button role="tab" id="tab-${id}" aria-selected="${S.view === id}" data-act="view" data-id="${id}">${label}${count ? `<span class="count">${esc(count)}</span>` : ""}${id === "audit" && acc ? `<span class="count">${acc} to apply</span>` : ""}</button>`).join("");
+  }
+
+  function miniBars(L, known) {
+    const max = Math.max(L.A, L.B, L.C) || 1;
+    return `<span class="mini ${known ? "" : "unknown"}" aria-hidden="true">${PHASES.map((ph) => `<i class="ph-${ph}" style="height:${(L[ph] / max * 100).toFixed(1)}%"></i>`).join("")}</span>`;
+  }
+
+  function viewBrowser() {
+    const lv = SP.levels.map((level) => {
+      const items = S.panels.filter((p) => p.level === level).map((p) => {
+        const st = panelStatus(p);
+        const a = live(p);
+        return `<button class="pb-item" data-act="open-panel" data-id="${p.id}" aria-current="${S.view === "workspace" && S.sel === p.id}" title="${esc(p.use)} · ${STATUS[st].label()}">
+          <span class="plate">${p.name}</span>
+          ${miniBars(a.loads, !!p.audit)}
+          <span class="pb-imb-wrap"><span class="pb-imb">${p.audit ? pct(a.imb) : "—"}</span><span class="lamp lamp-${st}"></span></span>
+        </button>`;
+      }).join("");
+      return `<div class="pb-level"><div class="pb-level-name">${level}</div>${items}</div>`;
+    }).join("");
+    const acts = S.activity.slice(0, 40).map((a) => `<li class="k-${a.kind}"><time>${hms(a.t)}</time><span>${esc(a.text)}</span></li>`).join("");
+    return `
+      <div class="pb-head">Project browser <span>${S.panels.length} panels</span></div>
+      ${lv}
+      <div class="activity">
+        <div class="pb-head">Activity <span>${S.activity.length ? "newest first" : ""}</span></div>
+        ${acts ? `<ol>${acts}</ol>` : `<p class="empty">Nothing has run yet. Start with Run audit, or press Guided dry run to follow the full story.</p>`}
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------- audit view
+  function viewAudit() {
+    const sum = auditSummary();
+    const acc = S.panels.filter((p) => p.review === "accepted").length;
+    const flagged = S.panels.filter((p) => p.review !== "applied" && ["over", "locked"].includes(auditStatus(p))).length;
+    const anyProp = S.panels.some((p) => p.proposal);
+    const summary = sum
+      ? `<b>${sum.n}</b> panels checked<span class="sep">·</span><b class="${sum.over ? "tx-alarm" : "tx-fix"}">${sum.over}</b> above ${S.cfg.target}%<span class="sep">·</span>worst: <b>${sum.worst.name}</b> at <b>${pct(sum.worst.audit.imb)}</b>`
+      : `Nothing audited yet. The audit reads every panel and its circuits, computes the phase loads, and flags any panel above the ${S.cfg.target}% target. It changes nothing.`;
+    return `<section class="view" aria-labelledby="h-audit">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Step 1 · Audit</p>
+          <h1 id="h-audit">Project audit</h1>
+          <p class="summary">${summary}</p>
+        </div>
+        <div class="actions">
+          <button class="btn ${sum ? "" : "btn-primary"}" data-act="run-audit">${icon("scan")} ${sum ? "Re-run audit" : "Run audit"}</button>
+          <button class="btn ${sum && flagged && !anyProp ? "btn-primary" : ""}" data-act="balance-all" ${sum && flagged ? "" : "disabled"}>${icon("bolt")} Balance all flagged${flagged ? ` (${flagged})` : ""}</button>
+          <button class="btn ${acc ? "btn-primary" : ""}" data-act="apply-accepted" ${acc ? "" : "disabled"}>${icon("check")} Apply accepted${acc ? ` (${acc})` : ""}</button>
+        </div>
+      </div>
+      <div class="audit-grid">${viewRiser()}${viewDumbbell()}</div>
+      ${viewAuditTable()}
+    </section>`;
+  }
+
+  function viewRiser() {
+    const order = SP.levels.slice().reverse(); // bottom → top for scan timing
+    const storeys = SP.levels.map((level) => {
+      const fromBottom = order.indexOf(level);
+      const cards = S.panels.filter((p) => p.level === level).map((p, i) => {
+        const st = panelStatus(p);
+        const a = live(p);
+        const d = 260 + fromBottom * 430 + i * 110;
+        return `<button class="rcard" data-act="open-panel" data-id="${p.id}" style="--d:${d}ms" aria-label="${p.name}, ${STATUS[st].label()}">
+          <span class="plate">${p.name}</span>
+          ${miniBars(a.loads, !!p.audit)}
+          <span class="rcard-imb">${p.audit ? pct(a.imb) : "—"}</span>
+          ${chip(st)}
+          ${isStale(p) ? `<span class="stale" title="The model changed after the last audit">changed</span>` : ""}
+          ${S.anim.audit ? `<span class="cover">reading…</span>` : ""}
+        </button>`;
+      }).join("");
+      return `<div class="storey"><div class="storey-tag"><b>${level}</b><span>FFL ${FFL[level]} m</span></div><div class="storey-run">${cards}</div></div>`;
+    }).join("");
+    return `<div class="card riser ${S.anim.audit ? "scanning" : ""}">
+      <div class="card-h"><h2>Riser</h2><span class="card-sub">Open any panel to see its board</span></div>
+      <div class="riser-body">
+        ${storeys}
+        <div class="storey"><div class="storey-tag"><b>LV room</b><span>Level 01</span></div>
+          <div class="storey-run"><div class="mdb"><span class="plate">MDB-01</span><span>Main distribution board · fed from TX-01, 1000 kVA, 11/0.4 kV</span></div></div>
+        </div>
+        <div class="scanline" aria-hidden="true"></div>
+      </div>
+    </div>`;
+  }
+
+  function viewDumbbell() {
+    const rows = S.panels.filter((p) => p.audit).sort((a, b) => b.audit.baseline - a.audit.baseline);
+    if (!rows.length) {
+      return `<div class="card"><div class="card-h"><h2>Imbalance by panel</h2></div>
+        <div class="empty-state"><p>Run the audit to plot every panel against the ${S.cfg.target}% target.</p>
+        <button class="btn btn-primary" data-act="run-audit">${icon("scan")} Run audit</button></div></div>`;
+    }
+    const afterOf = (p) => {
+      if (p.review === "applied") return live(p).imb;
+      if (p.proposal && p.proposal.changes.length) return p.proposal.afterImb;
+      return null;
+    };
+    const maxV = Math.max(30, ...rows.map((p) => p.audit.baseline));
+    const top = Math.ceil(maxV / 10) * 10;
+    const x = (v) => `${Math.min(100, v / top * 100).toFixed(2)}%`;
+    const ticks = [];
+    for (let v = 0; v <= top; v += top > 40 ? 20 : 10) ticks.push(v);
+    const t = S.cfg.target;
+    const body = rows.map((p) => {
+      const b = p.audit.baseline, a = afterOf(p);
+      const lo = a == null ? b : Math.min(a, b), hi = a == null ? b : Math.max(a, b);
+      return `<div class="db-row">
+        <button class="db-name" data-act="open-panel" data-id="${p.id}">${p.name}</button>
+        <div class="db-track">
+          <span class="axis"></span><span class="zone" style="width:${x(t)}"></span><span class="tline" style="left:${x(t)}"></span>
+          ${a != null ? `<span class="link" style="left:${x(lo)};width:calc(${x(hi)} - ${x(lo)})"></span>` : ""}
+          <span class="dot before ${b > t ? "over" : ""}" style="left:${x(b)}" title="As audited ${pct(b)}"></span>
+          ${a != null ? `<span class="dot after ${a > t ? "miss" : ""}" style="left:${x(a)}" title="After ${pct(a)}"></span>` : ""}
+        </div>
+        <span class="db-val">${pct(b)}${a != null ? ` → <b class="${a > t ? "tx-warn" : "tx-fix"}">${pct(a)}</b>` : ""}</span>
+      </div>`;
+    }).join("");
+    return `<div class="card">
+      <div class="card-h"><h2>Imbalance by panel</h2>
+        <div class="legend"><span><i class="sw" style="border:2.5px solid var(--alarm);background:var(--plate)"></i>As audited</span><span><i class="sw" style="background:var(--fix)"></i>After proposal</span><span><i class="sw" style="background:var(--fix-soft);border-radius:2px"></i>Within ${t}%</span></div>
+      </div>
+      <div class="db-rows">${body}</div>
+      <div class="db-axis"><span></span><div class="ticks">${ticks.map((v) => `<span style="left:${x(v)}">${v}%</span>`).join("")}</div><span></span></div>
+      <div class="card-b"><p class="hint">Imbalance is the largest deviation of any phase from the three-phase average, as a percentage of that average. Basis: ${S.cfg.basis} VA.</p></div>
+    </div>`;
+  }
+
+  function viewAuditTable() {
+    const audited = S.panels.some((p) => p.audit);
+    const rows = S.panels.slice();
+    const k = S.sort.key, dir = S.sort.dir;
+    const val = (p) => {
+      const a = live(p);
+      return k === "name" ? p.name : k === "level" ? SP.levels.length - SP.levels.indexOf(p.level) : k === "A" || k === "B" || k === "C" ? a.loads[k] : k === "status" ? panelStatus(p) : a.imb;
+    };
+    rows.sort((a, b) => { const va = val(a), vb = val(b); return (va > vb ? 1 : va < vb ? -1 : 0) * dir; });
+    const th = (key, label, r) => `<th class="${r ? "r" : ""}"><button class="sort-btn" data-act="sort" data-id="${key}" data-active="${k === key}">${label}${k === key ? (dir > 0 ? " ▲" : " ▼") : ""}</button></th>`;
+    const body = rows.map((p) => {
+      const a = live(p); const st = panelStatus(p); const pr = p.proposal;
+      let prop = `<span class="tx-muted">—</span>`, act = "";
+      if (pr && p.review !== "applied") {
+        if (pr.status === "proposed") prop = `${plural(pr.changes.length, "move")} → <b class="tx-fix">${pct(pr.afterImb)}</b>`;
+        else if (pr.status === "ok") prop = `<span class="tx-muted">No change needed</span>`;
+        else prop = `<span class="tx-warn">Best ${pct(pr.afterImb)}</span>`;
+        if (pr.status === "proposed" && !p.review) act = `<div class="actions"><button class="btn btn-sm" data-act="accept" data-id="${p.id}">${icon("check")} Accept</button><button class="btn btn-sm btn-ghost" data-act="reject" data-id="${p.id}">Reject</button></div>`;
+        else if (p.review === "accepted") act = `<button class="btn btn-sm btn-ghost" data-act="unreview" data-id="${p.id}">Undo accept</button>`;
+        else if (p.review === "rejected") act = `<button class="btn btn-sm btn-ghost" data-act="unreview" data-id="${p.id}">Reconsider</button>`;
+        else if (pr.status === "needs" || pr.status === "locked") act = `<button class="btn btn-sm" data-act="open-panel" data-id="${p.id}">Open</button>`;
+      } else if (p.review === "applied") {
+        const t = S.tx.find((x) => x.panelId === p.id && !x.undone);
+        prop = `<span class="tx-fix">Applied · ${plural(t ? t.changes : 0, "circuit")}</span>`;
+        if (t) act = `<button class="btn btn-sm btn-ghost" data-act="undo" data-id="${t.id}">${icon("undo")} Undo</button>`;
+      }
+      return `<tr>
+        <td><button class="link-btn" data-act="open-panel" data-id="${p.id}">${p.name}</button></td>
+        <td>${p.level}</td><td>${esc(p.use)}</td>
+        ${PHASES.map((ph) => `<td class="num r">${p.audit ? fmt(a.loads[ph]) : "—"}</td>`).join("")}
+        <td class="num r"><b>${p.audit ? pct(a.imb) : "—"}</b></td>
+        <td>${chip(st)}${p.audit && p.audit.zero ? ` <span class="chip chip-needs" title="Circuits without a load value">${icon("alert")}${plural(p.audit.zero, "circuit")} 0 VA</span>` : ""}</td>
+        <td>${prop}</td><td>${act}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="card">
+      <div class="card-h"><h2>Audit table</h2><span class="card-sub">${audited ? `Phase loads in VA, ${S.cfg.basis} basis. Sort by any column.` : "Values appear after the audit runs."}</span></div>
+      <div class="table-wrap"><table class="tbl">
+        <thead><tr>${th("name", "Panel")}${th("level", "Level")}<th>Use</th>${th("A", "L<sub>A</sub>", 1)}${th("B", "L<sub>B</sub>", 1)}${th("C", "L<sub>C</sub>", 1)}${th("imb", "Imbalance", 1)}${th("status", "Status")}<th>Proposal</th><th>Review</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  // ---------------------------------------------------------------- workspace view
+  function wsState(p) {
+    const pr = p.proposal;
+    const cur = live(p);
+    if (p.review === "applied" && pr) return { mode: "applied", pr, cur, circuits: p.circuits, before: pr.before, beforeImb: pr.beforeImb, after: cur.loads, afterImb: cur.imb, b1: null };
+    if (pr && S.boardMode === "proposed" && pr.changes.length) {
+      return { mode: "proposed", pr, cur, circuits: pr.newCircuits, before: cur.loads, beforeImb: cur.imb, after: pr.after, afterImb: pr.afterImb };
+    }
+    return { mode: "drawn", pr, cur, circuits: p.circuits, before: cur.loads, beforeImb: cur.imb, after: null, afterImb: null };
+  }
+
+  function viewWorkspace() {
+    const p = panel(S.sel);
+    const W = wsState(p);
+    const st = panelStatus(p);
+    const pr = W.pr;
+    const V = PM.VOLTAGES[S.cfg.voltage];
+    const canToggle = pr && pr.changes.length && p.review !== "applied";
+    return `<section class="view" aria-labelledby="h-ws">
+      <div class="ws-head">
+        <div class="ws-id">
+          <h1 id="h-ws" class="sr">Panel ${p.name}</h1>
+          <span class="plate plate-xl">${p.name}</span>
+          <div>
+            <div class="ws-spec">${V.label} · ${p.ways}-way · ${esc(p.main)} · ${p.level} · fed from ${esc(p.fedFrom)}</div>
+            ${p.note ? `<div class="ws-note">${esc(p.note)}</div>` : `<div class="ws-spec">${esc(p.use)}</div>`}
+            ${p.noteDetail ? `<div class="hint" style="max-width:80ch;margin-top:2px">${esc(p.noteDetail)}</div>` : ""}
+          </div>
+        </div>
+        <div class="actions">${chip(st)}${isStale(p) ? `<span class="chip chip-needs">${icon("change")}Changed since audit</span>` : ""}</div>
+      </div>
+      <div class="card controls">
+        <div class="ctl"><span class="ctl-label" id="lbl-appr">Approach</span>
+          <div class="seg" role="group" aria-labelledby="lbl-appr">
+            <button id="appr-mm" aria-pressed="${S.cfg.approach === "min_move"}" data-act="approach" data-id="min_move">Minimum moves</button>
+            <button id="appr-lpt" aria-pressed="${S.cfg.approach === "lpt"}" data-act="approach" data-id="lpt">Fresh layout (LPT)</button>
+          </div></div>
+        <div class="ctl"><label class="ctl-label" for="target">Target</label>
+          <input type="range" id="target" min="5" max="15" step="1" value="${S.cfg.target}" aria-describedby="target-out"><output id="target-out" for="target">${S.cfg.target}%</output></div>
+        <div class="ctl"><span class="ctl-label" id="lbl-basis">Basis</span>
+          <div class="seg" role="group" aria-labelledby="lbl-basis">
+            <button id="basis-c" aria-pressed="${S.cfg.basis === "connected"}" data-act="basis" data-id="connected">Connected VA</button>
+            <button id="basis-d" aria-pressed="${S.cfg.basis === "demand"}" data-act="basis" data-id="demand">Demand VA</button>
+          </div></div>
+        <div class="ctl-actions">
+          <button class="btn btn-primary" id="run-copilot" data-act="run-copilot">${icon("bolt")} Run copilot</button>
+          <button class="btn" data-act="design-change" title="Change one circuit's load, as happens during design development">${icon("change")} Simulate design change</button>
+        </div>
+      </div>
+      <div class="ws-grid">
+        <div class="card">
+          <div class="card-h"><h2>Panelboard</h2>
+            <div class="seg small" role="group" aria-label="Layout shown">
+              <button id="bm-drawn" aria-pressed="${W.mode !== "proposed"}" data-act="board-mode" data-id="drawn">${p.review === "applied" ? "As applied" : "As drawn"}</button>
+              <button id="bm-prop" aria-pressed="${W.mode === "proposed"}" data-act="board-mode" data-id="proposed" ${canToggle ? "" : "disabled"}>Proposed</button>
+            </div>
+            <div class="seg small" role="group" aria-label="Drawing style">
+              <button id="bs-board" aria-pressed="${S.boardStyle === "board"}" data-act="board-style" data-id="board">Board</button>
+              <button id="bs-sched" aria-pressed="${S.boardStyle === "schedule"}" data-act="board-style" data-id="schedule">Schedule</button>
+            </div>
+          </div>
+          ${S.boardStyle === "board" ? viewBoard(p, W) : viewSchedule(p, W)}
+          <div class="board-legend">
+            <span><i class="lg-box locked"></i>Locked or DoNotMove (click the padlock)</span>
+            <span><i class="lg-box pending"></i>Will move</span>
+            <span><i class="lg-box moved"></i>Moved</span>
+            <span><i class="lg-box space"></i>Space</span>
+            <span>Click a breaker to inspect it</span>
+          </div>
+        </div>
+        <div class="ws-side">
+          ${viewReadout(p, W)}
+          ${viewPhaseLoads(p, W)}
+          ${viewPhasor(p, W)}
+          ${S.selCircuit ? viewInspector(p) : ""}
+        </div>
+      </div>
+      ${viewReview(p, W)}
+    </section>`;
+  }
+
+  function marks(p, W) {
+    const moved = new Map(), ghosts = new Map(), pending = new Map();
+    if (!W.pr) return { moved, ghosts, pending };
+    if (W.mode === "drawn") { for (const ch of W.pr.changes) pending.set(ch.id, ch); return { moved, ghosts, pending }; }
+    for (const ch of W.pr.changes) moved.set(ch.id, ch);
+    const occ = new Set();
+    for (const c of W.circuits) for (const s of PM.slotsOf(c)) occ.add(s);
+    for (const ch of W.pr.changes) if (!occ.has(ch.fromSlot)) ghosts.set(ch.fromSlot, ch);
+    return { moved, ghosts, pending };
+  }
+
+  function viewBoard(p, W) {
+    const rows = Math.ceil(p.ways / 2);
+    const M = marks(p, W);
+    const occ = new Map();
+    for (const c of W.circuits) for (const s of PM.slotsOf(c)) occ.set(s, c);
+    const evalIds = S.anim.eval ? new Set(PM.toCore(p, S.cfg).filter(PB.isMovable).map((c) => c.number)) : null;
+    let cells = "", ev = 0;
+    for (let s = 1; s <= p.ways; s++) {
+      const c = occ.get(s);
+      const odd = s % 2 === 1;
+      const pos = `grid-row:${PM.rowOfSlot(s)} / span ${c && c.slot === s ? c.poles : 1};grid-column:${odd ? 1 : 3}`;
+      if (!c) {
+        const g = M.ghosts.get(s);
+        cells += `<div class="space ${odd ? "L" : "R"} ${g ? "ghost" : ""}" style="${pos}"><span>${g ? `${esc(g.name)} moved to slot ${g.toSlot}` : "Space"}</span><span>${s}</span></div>`;
+        continue;
+      }
+      if (c.slot !== s) continue;
+      const phs = PM.phasesOf(c);
+      const locked = PM.isLocked(c, S.cfg);
+      const mv = M.moved.get(c.id), pd = M.pending.get(c.id);
+      const va = PM.basisVA(c, S.cfg);
+      const cls = ["brk", odd ? "L" : "R", c.spare ? "spare" : "", c.poles > 1 ? "multi" : "", locked ? "locked" : "", mv ? "moved" : "", pd ? "pending" : "", S.selCircuit === c.id ? "sel" : "", !c.spare && !(c.va > 0) ? "zero" : "", evalIds && evalIds.has(c.slot) ? "eval" : ""].filter(Boolean).join(" ");
+      const lockTitle = c.lockedSlot && S.cfg.respectLocks ? "Engineer-locked slot. Click to unlock." : c.doNotMove ? "DoNotMove = Yes. Click to release." : "Click to flag DoNotMove";
+      const meta = c.spare ? "no load" : `${c.poles}P · ${c.cls}${c.poles > 1 ? " · fixed" : ""}${!(c.va > 0) ? " · no load set" : ""}`;
+      const vaHtml = c.spare ? "" : `<span class="brk-va"><b>${fmt(va)}</b><small>VA</small></span>`;
+      const tag = mv ? `<span class="was">was ${mv.fromSlot} · ${mv.fromPhase}→${mv.toPhase}</span>` : pd ? `<span class="pend">→ ${pd.toSlot} (${pd.toPhase})</span>` : "";
+      const d = evalIds && evalIds.has(c.slot) ? `--d:${(ev++) * 70}ms;` : "";
+      cells += `<div class="${cls}" data-cid="${c.id}" data-act="pick-circuit" data-id="${c.id}" role="button" tabindex="0" style="${d}${pos}" aria-label="Circuit ${c.slot}, ${esc(c.spare ? "spare" : c.name)}, phase ${phs.join(" ")}${locked ? ", locked" : ""}">
+        <span class="brk-no">${c.slot}</span>
+        <span class="brk-body"><span class="brk-name" title="${esc(c.spare ? "Spare" : c.name)}">${esc(c.spare ? "Spare" : c.name)}</span><span class="brk-meta">${meta}</span></span>
+        ${vaHtml}${tag}
+        ${c.spare || c.poles > 1 ? "" : `<button class="brk-lock ${locked ? "on" : ""}" data-act="toggle-lock" data-id="${c.id}" aria-pressed="${locked}" title="${lockTitle}" aria-label="${lockTitle}">${icon(locked ? "lock" : "unlock")}</button>`}
+        <span class="brk-handle">${phs.map((ph) => `<i class="ph-${ph}"></i>`).join("")}</span>
+      </div>`;
+    }
+    return `<div class="board-wrap"><div class="board-frame">
+      <div class="board-headrow"><span>Odd · left</span><span class="bus-labels"><b class="ph-A">A</b><b class="ph-B">B</b><b class="ph-C">C</b></span><span>Even · right</span></div>
+      <div class="board" style="grid-template-rows:repeat(${rows}, var(--row))">${busSvg(rows, occ)}${cells}</div>
+    </div></div>`;
+  }
+
+  function busSvg(rows, occ) {
+    const rh = 50, gap = 4, H = rows * rh + (rows - 1) * gap, W = 120;
+    const X = { A: 36, B: 60, C: 84 };
+    let taps = "", studs = "";
+    for (let r = 1; r <= rows; r++) {
+      const ph = PM.phaseOfSlot(2 * r - 1);
+      const y = (r - 1) * (rh + gap) + rh / 2;
+      const l = occ.get(2 * r - 1), rt = occ.get(2 * r);
+      taps += `<line class="tap ${ph} ${l ? "" : "faint"}" x1="0" y1="${y}" x2="${X[ph]}" y2="${y}"/>`;
+      taps += `<line class="tap ${ph} ${rt ? "" : "faint"}" x1="${X[ph]}" y1="${y}" x2="${W}" y2="${y}"/>`;
+      studs += `<rect class="stud ${ph}" x="${X[ph] - 7}" y="${y - 5}" width="14" height="10" rx="2"/>`;
+    }
+    const bars = PHASES.map((ph) => `<rect class="bar" x="${X[ph] - 4}" y="-6" width="8" height="${H + 12}" rx="2"/>`).join("");
+    return `<svg class="bus" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${taps}${bars}${studs}</svg>`;
+  }
+
+  function viewSchedule(p, W) {
+    const rows = Math.ceil(p.ways / 2);
+    const M = marks(p, W);
+    const occ = new Map();
+    for (const c of W.circuits) for (const s of PM.slotsOf(c)) occ.set(s, c);
+    const side = (s) => {
+      const c = occ.get(s);
+      if (!c) { const g = M.ghosts.get(s); return { ckt: s, desc: g ? `<span class="tx-fix">moved to ${g.toSlot}</span>` : `<span class="muted">Space</span>`, va: "", poles: "", share: 0, moved: false }; }
+      const share = PM.basisVA(c, S.cfg) / c.poles;
+      if (c.slot !== s) return { ckt: s, desc: `<span class="muted">↳ ${c.slot} (${c.poles}-pole)</span>`, va: "", poles: "", share, moved: false };
+      const mv = M.moved.get(c.id), pd = M.pending.get(c.id);
+      return { ckt: s, desc: `${esc(c.spare ? "Spare" : c.name)}${PM.isLocked(c, S.cfg) ? ` ${icon("lock")}` : ""}${mv ? ` <span class="was">was ${mv.fromSlot}</span>` : pd ? ` <span class="pend">→ ${pd.toSlot}</span>` : ""}`, va: c.spare ? "" : fmt(PM.basisVA(c, S.cfg)), poles: c.spare ? "" : c.poles, share, moved: !!mv };
+    };
+    let body = "";
+    for (let r = 1; r <= rows; r++) {
+      const ph = PM.phaseOfSlot(2 * r - 1);
+      const L = side(2 * r - 1), R = side(2 * r);
+      const pc = PHASES.map((q) => q === ph ? `<td class="pc live ph-${q}">${L.share || R.share ? `${L.share ? fmt(L.share) : "–"} | ${R.share ? fmt(R.share) : "–"}` : "–"}</td>` : `<td class="pc"></td>`).join("");
+      body += `<tr><td class="ckt">${L.ckt}</td><td class="desc ${L.moved ? "side-moved" : ""}">${L.desc}</td><td class="va">${L.va}</td><td class="muted">${L.poles}</td>${pc}<td class="muted">${R.poles}</td><td class="va">${R.va}</td><td class="desc ${R.moved ? "side-moved" : ""}">${R.desc}</td><td class="ckt">${R.ckt}</td></tr>`;
+    }
+    const loads = W.mode === "proposed" ? W.after : live(p).loads;
+    const imb = PB.imbalancePct(loads);
+    return `<div class="board-wrap"><table class="sched">
+      <thead><tr><th>Ckt</th><th>Circuit description</th><th class="r">VA</th><th>P</th><th class="pc ph-A">A</th><th class="pc ph-B">B</th><th class="pc ph-C">C</th><th>P</th><th class="r">VA</th><th>Circuit description</th><th>Ckt</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="4">Total per phase (VA)</td>${PHASES.map((q) => `<td class="pc">${fmt(loads[q])}</td>`).join("")}<td colspan="4">Imbalance ${pct(imb)}</td></tr></tfoot>
+    </table></div>`;
+  }
+
+  function vizMemo(p) { return S.viz[p.id] || (S.viz[p.id] = {}); }
+
+  function viewReadout(p, W) {
+    const memo = vizMemo(p);
+    const showAfter = W.mode !== "drawn";
+    const val = showAfter ? W.afterImb : W.beforeImb;
+    const from = memo.imb == null ? val : memo.imb;
+    const t = S.cfg.target;
+    const top = Math.max(30, Math.ceil(Math.max(W.beforeImb, W.afterImb || 0) / 10) * 10);
+    const x = (v) => `${Math.min(100, v / top * 100).toFixed(2)}%`;
+    const ticks = []; for (let v = 0; v <= top; v += top > 40 ? 20 : 10) ticks.push(v);
+    const pr = W.pr;
+    const hint = W.mode === "drawn" && pr && pr.changes.length ? `<p class="readout-note">Proposal ready: <b class="tx-fix">${pct(pr.afterImb)}</b> with ${plural(pr.changes.length, "circuit")} renumbered. Switch to Proposed to see it.</p>` : "";
+    const avg = (W.before.A + W.before.B + W.before.C) / 3;
+    return `<div class="card readout">
+      <div class="readout-top">
+        ${showAfter ? `<div><span class="k">Before</span><span class="imb-before">${pct(W.beforeImb)}</span></div><span class="imb-arrow">${icon("arrow")}</span>` : ""}
+        <div><span class="k">${showAfter ? (W.mode === "applied" ? "Now" : "After") : "Imbalance"}</span>
+          <span class="imb-big ${val > t ? "tx-alarm" : "tx-fix"}" data-tween-from="${from}" data-tween-to="${val}">${pct(val)}</span></div>
+      </div>
+      <div>
+        <div class="gauge" role="img" aria-label="Imbalance ${pct(val)} against a ${t}% target">
+          <span class="g-ok" style="width:${x(t)}"></span>
+          ${showAfter ? `<span class="g-mark before" style="left:${x(W.beforeImb)}"></span>` : ""}
+          <span class="g-mark ${showAfter ? "after" : val > t ? "before" : "after"}" style="left:${x(val)}"></span>
+        </div>
+        <div class="gauge-scale">${ticks.map((v) => `<span style="left:${x(v)}">${v}%</span>`).join("")}</div>
+      </div>
+      <p class="readout-note">Largest phase deviation from the ${fmt(showAfter ? (W.after.A + W.after.B + W.after.C) / 3 : avg)} VA average. Target ≤ ${t}%, ${S.cfg.basis} basis.</p>
+      ${hint}
+    </div>`;
+  }
+
+  function viewPhaseLoads(p, W) {
+    const memo = vizMemo(p);
+    const showAfter = W.mode !== "drawn";
+    const shown = showAfter ? W.after : W.before;
+    const avg = (shown.A + shown.B + shown.C) / 3;
+    const t = S.cfg.target / 100;
+    const max = Math.max(W.before.A, W.before.B, W.before.C, showAfter ? Math.max(W.after.A, W.after.B, W.after.C) : 0, avg * (1 + t)) * 1.06 || 1;
+    const x = (v) => `${(v / max * 100).toFixed(2)}%`;
+    const prevW = memo.bars || {};
+    const rows = PHASES.map((ph) => {
+      const w = x(shown[ph]);
+      const w0 = prevW[ph] || w;
+      return `<div class="pl-row ph-${ph}">
+        <span class="pl-tag">${ph}</span>
+        <div class="pl-main">
+          <div class="pl-track">
+            <span class="pl-band" style="left:${x(avg * (1 - t))};width:${x(avg * 2 * t)}"></span>
+            ${showAfter ? `<span class="pl-before" style="width:${x(W.before[ph])}"></span>` : ""}
+            <span class="pl-bar" data-w="${w}" style="width:${w0}"></span>
+            <span class="pl-avg" style="left:${x(avg)}"></span>
+          </div>
+          <div class="pl-vals">
+            <span>${showAfter ? `${fmt(W.before[ph])} → <b>${fmt(W.after[ph])}</b>` : `<b>${fmt(W.before[ph])}</b>`} VA</span>
+            <span>${showAfter ? `${amp(W.before[ph])} → <b>${amp(W.after[ph])}</b>` : `<b>${amp(W.before[ph])}</b>`} A</span>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+    memo.barsNext = Object.fromEntries(PHASES.map((ph) => [ph, x(shown[ph])]));
+    return `<div class="card">
+      <div class="card-h"><h2>Phase loading</h2><span class="card-sub">${PM.VOLTAGES[S.cfg.voltage].ln} V line to neutral</span></div>
+      <div class="pl">${rows}
+        <div class="pl-foot">
+          <span><i class="lg-box" style="background:var(--fix-soft);border-color:var(--fix)"></i>Band each phase must sit inside for ≤ ${S.cfg.target}%</span>
+          <span><i style="display:inline-block;width:0;height:12px;border-left:1.5px dashed var(--ink-2)"></i>Average ${fmt(avg)} VA</span>
+          ${showAfter ? `<span><i class="lg-box" style="border:1.5px dashed var(--ink-2);background:transparent"></i>Before</span>` : ""}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function onePoleLoadsOf(p, circuits) { return PM.onePoleLoads({ ways: p.ways, circuits }, S.cfg); }
+
+  function viewPhasor(p, W) {
+    const vln = PM.VOLTAGES[S.cfg.voltage].ln;
+    const curL = onePoleLoadsOf(p, W.mode === "applied" && W.pr ? W.pr.newCircuits : p.circuits);
+    const beforeL = W.mode === "applied" && W.pr ? onePoleLoadsOf(p, panelBefore(p)) : onePoleLoadsOf(p, p.circuits);
+    const showAfter = W.mode !== "drawn";
+    const afterL = showAfter ? (W.mode === "applied" ? curL : onePoleLoadsOf(p, W.circuits)) : null;
+    const shown = showAfter ? afterL : beforeL;
+    const In = PM.neutralCurrent(shown, vln), In0 = PM.neutralCurrent(beforeL, vln);
+    const cur = { a: shown.A / vln, b: shown.B / vln, c: shown.C / vln };
+    const scaleMax = Math.max(beforeL.A, beforeL.B, beforeL.C, afterL ? Math.max(afterL.A, afterL.B, afterL.C) : 0) / vln || 1;
+    return `<div class="card">
+      <div class="card-h"><h2>Neutral current</h2><span class="card-sub">Phasor view</span></div>
+      <div class="phasor-wrap">
+        <svg class="phasor" id="phasor" viewBox="-100 -100 200 200" data-a="${cur.a}" data-b="${cur.b}" data-c="${cur.c}" data-max="${scaleMax}" role="img" aria-label="Phasor diagram. Estimated neutral current ${In.toFixed(1)} amps.">
+          <circle class="ring" r="78"/><circle class="ring" r="39"/>
+          <line class="axis" x1="0" y1="0" x2="0" y2="-88"/><line class="axis" x1="0" y1="0" x2="76" y2="44"/><line class="axis" x1="0" y1="0" x2="-76" y2="44"/>
+          <g id="ph-vecs"></g>
+        </svg>
+        <div class="phasor-copy">
+          <span class="k">Estimated neutral current</span>
+          <span class="neutral-big">${showAfter ? `<span class="tx-muted" style="text-decoration:line-through">${In0.toFixed(1)}</span> → ` : ""}${In.toFixed(1)} A</span>
+          <p class="hint">From single-pole loads at unity power factor. A balanced panel cancels on the neutral; every volt-amp of imbalance returns along it.</p>
+        </div>
+      </div>
+    </div>`;
+  }
+  function panelBefore(p) {
+    const t = S.tx.find((x) => x.panelId === p.id && !x.undone);
+    return t ? t.prev : p.circuits;
+  }
+
+  function drawPhasor(svg, v, max) {
+    const R = 78;
+    const ang = { a: -90, b: 30, c: 150 }; // A up, B lower right, C lower left (screen coordinates)
+    const pt = (k, mag) => { const r = (mag / max) * R, th = ang[k] * Math.PI / 180; return [r * Math.cos(th), r * Math.sin(th)]; };
+    const arrow = (x, y, cls, label) => {
+      const len = Math.hypot(x, y);
+      if (len < 0.5) return `<circle class="head ${cls}" r="3"/>`;
+      const ux = x / len, uy = y / len, hx = x - ux * 7, hy = y - uy * 7;
+      const px = -uy * 4.5, py = ux * 4.5;
+      const lx = x + ux * 11, ly = y + uy * 11 + 4;
+      return `<line class="vec ${cls}" x1="0" y1="0" x2="${hx.toFixed(2)}" y2="${hy.toFixed(2)}"/>` +
+        `<path class="head ${cls}" d="M${x.toFixed(2)},${y.toFixed(2)} L${(hx + px).toFixed(2)},${(hy + py).toFixed(2)} L${(hx - px).toFixed(2)},${(hy - py).toFixed(2)} Z"/>` +
+        (label ? `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle">${label}</text>` : "");
+    };
+    const A = pt("a", v.a), B = pt("b", v.b), C = pt("c", v.c);
+    const N = [A[0] + B[0] + C[0], A[1] + B[1] + C[1]];
+    svg.querySelector("#ph-vecs").innerHTML = arrow(A[0], A[1], "A", "A") + arrow(B[0], B[1], "B", "B") + arrow(C[0], C[1], "C", "C") + arrow(N[0], N[1], "N", Math.hypot(N[0], N[1]) > 6 ? "N" : "");
+  }
+
+  function viewInspector(p) {
+    const c = p.circuits.find((x) => x.id === S.selCircuit);
+    if (!c) return "";
+    const phs = PM.phasesOf(c).join(" + ");
+    const sheets = (c.sheets || []).map((s) => `<span class="sheet-tag ${s.issued ? "issued" : ""}" title="${esc(s.title)}">${s.id} ${s.issued ? `issued ${s.rev}` : s.rev}</span>`).join("");
+    const lockable = !c.spare && c.poles === 1;
+    return `<div class="card">
+      <div class="card-h"><h2>Circuit ${c.slot}</h2><button class="btn btn-sm btn-ghost" data-act="close-insp">Close</button></div>
+      <div class="insp">
+        <p><b>${esc(c.spare ? "Spare breaker" : c.name)}</b></p>
+        <dl class="insp-grid">
+          <dt>Phase</dt><dd class="mono">${phs} · ${c.poles}-pole${c.poles > 1 ? " · fixed (R2)" : ""}</dd>
+          ${c.spare ? "" : `<dt>Class</dt><dd>${CLS[c.cls]} · demand factor ${S.cfg.demandFactors[c.cls]}</dd>
+          <dt><label for="insp-va">Load</label></dt><dd><input type="number" id="insp-va" min="0" step="50" value="${c.va}"> VA</dd>`}
+          ${lockable ? `<dt>Locks</dt><dd style="display:flex;flex-direction:column;gap:6px">
+            <label class="check"><input type="checkbox" id="insp-dnm" ${c.doNotMove ? "checked" : ""}> DoNotMove = Yes</label>
+            <label class="check"><input type="checkbox" id="insp-ls" ${c.lockedSlot ? "checked" : ""}> Engineer-locked slot</label></dd>` : ""}
+          ${sheets ? `<dt>Tagged on</dt><dd>${sheets}</dd>` : ""}
+        </dl>
+        <p class="hint">Changing the load or a lock re-runs any open proposal for this panel.</p>
+      </div>
+    </div>`;
+  }
+
+  function describeStep(st) {
+    if (st.kind === "move") return `move circuit ${st.numbers[0]} from ${st.from[0]} to ${st.to[0]}`;
+    return `swap circuits ${st.numbers[0]} and ${st.numbers[1]} (${st.from[0]} ↔ ${st.from[1]})`;
+  }
+
+  function viewTrace(p, pr) {
+    const reveal = !!S.anim.trace;
+    let items = "";
+    let d = 0;
+    const li = (html, cls) => `<li class="${cls || ""} ${reveal ? "reveal" : ""}" style="--d:${(d++) * 380}ms">${html}</li>`;
+    if (pr.approach === "lpt") {
+      const mv = PM.toCore(p, S.cfg).filter(PB.isMovable).length;
+      items += li(`Sorted ${plural(mv, "movable circuit")} by load, largest first.`);
+      items += li(`Placed each one on whichever phase was lightest at that moment, ignoring where it was drawn.`);
+      items += li(`Result ${pct(pr.afterImb)} with ${plural(pr.changes.length, "circuit")} renumbered.`, "stop");
+    } else {
+      const T = pr.trace;
+      if (!T.length) items += li(`Imbalance ${pct(pr.beforeImb)} is already within the ${pr.target}% target. Nothing to search.`, "stop");
+      for (const t of T) {
+        const evald = `Evaluated ${plural(t.evaluatedMoves, "single move")} and ${plural(t.evaluatedSwaps, "swap")}${t.blockedByCapacity ? `; ${plural(t.blockedByCapacity, "move")} skipped because the target phase has no free slot` : ""}.`;
+        if (t.step) items += li(`<b>Imbalance ${pct(t.before)}.</b> ${evald} Best: ${describeStep(t.step)}, removing ${t.gainPerCircuit.toFixed(1)} points per circuit renumbered. <span class="muted">Now ${pct(t.step.after)}.</span>`);
+        else items += li(`<b>Imbalance ${pct(t.before)}.</b> ${evald} None of them improves balance.`);
+      }
+      const why = { "target met": `target of ${pr.target}% met`, "no improving move": "no move or swap improves balance further", "iteration limit": "iteration limit reached" }[T.stopReason] || T.stopReason;
+      if (T.length) items += li(`Stopped: ${why}.`, "stop");
+    }
+    const cap = pr.slotCapacity;
+    return `<div class="card trace">
+      <div class="card-h"><h2>How the copilot decided</h2><span class="card-sub">${pr.approach === "lpt" ? "Greedy LPT" : "Minimum-move local search"} · capacity A ${cap.A} · B ${cap.B} · C ${cap.C} slots</span></div>
+      <ol>${items}</ol>
+      <div class="explain">
+        <p>${esc(explain(p, pr))}</p>
+        <p class="hint">Plain-language summary written by a fixed template from the change list. In production an approved LLM may phrase it; it never calculates loads or chooses placements.</p>
+      </div>
+    </div>`;
+  }
+
+  function explain(p, pr) {
+    const L = pr.before, avg = (L.A + L.B + L.C) / 3;
+    const [hp, hd] = PHASES.map((ph) => [ph, L[ph] - avg]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+    if (pr.status === "ok" && pr.approach !== "lpt") return `${p.name} sits at ${pct(pr.beforeImb)}, inside the ${pr.target}% target. No circuits need to move.`;
+    const origin = p.review === "applied" ? panelBefore(p) : p.circuits;
+    let s = `${p.name} was ${pct(pr.beforeImb)} unbalanced. Phase ${hp} carried ${fmt(L[hp])} VA, ${fmt(Math.abs(hd))} VA ${hd > 0 ? "above" : "below"} the ${fmt(avg)} VA average.`;
+    const ones = origin.filter((c) => !c.spare && c.poles === 1).sort((a, b) => b.va - a.va);
+    if (hd > 0 && ones[0] && PM.phaseOfSlot(ones[0].slot) === hp) s += ` It holds the largest single-pole load, ${ones[0].name} at ${fmt(ones[0].va)} VA.`;
+    const ch = pr.changes;
+    if (ch.length === 1) s += ` Moving ${ch[0].name} (${fmt(ch[0].va)} VA) from phase ${ch[0].fromPhase} to phase ${ch[0].toPhase} brings every phase within ${pct(pr.afterImb)} of the average. No other circuit changes.`;
+    else if (ch.length === 2 && ch[0].kind === "swap") s += ` Swapping ${ch[0].name} (${fmt(ch[0].va)} VA, phase ${ch[0].fromPhase}) with ${ch[1].name} (${fmt(ch[1].va)} VA, phase ${ch[1].fromPhase}) brings every phase within ${pct(pr.afterImb)} of the average. Two circuits are renumbered.`;
+    else if (ch.length) s += ` ${ch.length} circuits change slots, bringing every phase within ${pct(pr.afterImb)} of the average.`;
+    const locked = origin.filter((c) => !c.spare && c.poles === 1 && PM.isLocked(c, S.cfg));
+    if (locked.length && ch.length) s += ` ${locked.length === 1 ? "One locked circuit" : `${locked.length} locked circuits`} stayed where ${locked.length === 1 ? "it was" : "they were"}.`;
+    if (pr.status === "needs" || pr.status === "locked") s += ` ${pr.reason}`;
+    return s;
+  }
+
+  function viewReview(p, W) {
+    const pr = W.pr;
+    if (!pr) {
+      return `<div class="card"><div class="dialog-h"><h2>Review proposal</h2><span class="txn">Nothing proposed yet</span></div>
+        <div class="empty-state">
+          <p>Run the copilot to search for the fewest circuit moves that bring ${p.name} inside ${S.cfg.target}%. You review every change before anything is written to the model.</p>
+          <button class="btn btn-primary" data-act="run-copilot">${icon("bolt")} Run copilot on ${p.name}</button>
+        </div></div>`;
+    }
+    const txName = `Phase Balancer – ${p.name}`;
+    let banner = "";
+    if (pr.status === "ok" && pr.approach !== "lpt") banner = `<div class="banner banner-ok">${icon("check")}<p>${esc(pr.reason)}</p></div>`;
+    if (pr.status === "needs") banner = `<div class="banner banner-needs">${icon("alert")}<p><b>Needs engineer.</b> ${esc(pr.reason)}</p></div>`;
+    if (pr.status === "locked") banner = `<div class="banner banner-locked">${icon("lock")}<p><b>Locked-limited.</b> ${esc(pr.reason)}</p></div>`;
+    const warns = pr.warnings.map((w) => `<div class="banner banner-warn">${icon("alert")}<p>${esc(w)}</p></div>`).join("");
+    const rows = pr.changes.map((c) => `<tr>
+      <td class="ckt">${c.fromSlot}</td>
+      <td class="cname">${esc(c.name)}<span class="kind">${c.kind === "swap" ? `swap with ${c.partnerSlot}` : "move to free slot"}</span></td>
+      <td class="num r">${fmt(c.va)} VA</td>
+      <td class="slot">slot ${c.fromSlot}<i class="ph-${c.fromPhase}">${c.fromPhase}</i></td>
+      <td class="slot">${icon("arrow")} slot ${c.toSlot}<i class="ph-${c.toPhase}">${c.toPhase}</i></td>
+      <td class="newno">${c.toSlot}</td>
+      <td>${(c.sheets || []).map((s) => `<span class="sheet-tag ${s.issued ? "issued" : ""}">${s.id}</span>`).join("")}</td>
+    </tr>`).join("");
+    const spares = pr.spareMoves.length ? `<p class="hint" style="padding:8px 16px 0">Spare breaker${pr.spareMoves.length > 1 ? "s" : ""} relocated: ${pr.spareMoves.map((m) => `slot ${m.fromSlot} → ${m.toSlot}`).join(", ")} (R7).</p>` : "";
+    const t = S.tx.find((x) => x.panelId === p.id && !x.undone);
+    let buttons;
+    if (p.review === "applied") buttons = `<span class="chip chip-applied">${icon("check")}Applied as “${esc(txName)}”</span>${t ? `<button class="btn" data-act="undo" data-id="${t.id}">${icon("undo")} Undo transaction</button>` : ""}`;
+    else if (p.review === "rejected") buttons = `<span class="chip chip-rejected">${icon("x")}Rejected and logged</span><button class="btn" data-act="unreview" data-id="${p.id}">Reconsider</button>`;
+    else if (pr.changes.length) buttons = `<button class="btn btn-primary" id="btn-apply" data-act="apply" data-id="${p.id}">${icon("check")} ${pr.status === "proposed" ? "Apply" : "Apply best effort"}</button>
+      <button class="btn" data-act="reject" data-id="${p.id}">Reject</button>
+      <button class="btn btn-ghost" data-act="focus-target">Re-run with a different target</button>`;
+    else buttons = `<button class="btn btn-ghost" data-act="focus-target">Re-run with a different target</button>`;
+    const sheetsAll = new Set(); for (const c of pr.changes) for (const s of c.sheets || []) sheetsAll.add(s.id);
+    return `<div class="review-grid">
+      <div class="card dialog">
+        <div class="dialog-h"><h2>Review proposal</h2><span class="txn">Transaction: ${esc(txName)}</span></div>
+        ${banner}${warns}
+        ${rows ? `<div class="table-wrap"><table class="tbl chg"><thead><tr><th>Ckt</th><th>Circuit</th><th class="r">Load</th><th>From</th><th>To</th><th>New no.</th><th>Sheets</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+        ${spares}
+        <div class="dialog-foot">
+          <div class="metrics">
+            <span><b>${plural(pr.changes.length, "circuit")}</b> renumbered</span>
+            <span>${pct(pr.beforeImb)} → <b>${pct(pr.afterImb)}</b></span>
+            <span>${plural(sheetsAll.size, "sheet")} with tag changes</span>
+            <span>Read-back ${pr.readBackOk ? `<b class="tx-fix">±1 VA ✓</b>` : `<b class="tx-alarm">mismatch</b>`}</span>
+          </div>
+          <div class="actions">${buttons}</div>
+        </div>
+      </div>
+      ${viewTrace(p, pr)}
+    </div>`;
+  }
+
+  // ---------------------------------------------------------------- compare view
+  function viewCompare() {
+    const p = panel(S.compare);
+    const cur = live(p);
+    const lpt = PM.propose(p, S.cfg, "lpt");
+    const mm = PM.propose(p, S.cfg, "min_move");
+    const issuedOf = (pr) => { const s = new Set(); for (const c of pr.changes) for (const sh of c.sheets || []) if (sh.issued) s.add(sh.id); return s; };
+    const cols = [
+      { key: "drawn", title: "As drawn", sub: "Circuits in modelling order", circuits: p.circuits, loads: cur.loads, imb: cur.imb, changes: [], status: auditStatus(p) === "unknown" ? (cur.imb > S.cfg.target ? "over" : "ok") : auditStatus(p) },
+      { key: "lpt", title: "Fresh layout (LPT)", sub: "Largest load to the lightest phase", circuits: lpt.newCircuits, loads: lpt.after, imb: lpt.afterImb, changes: lpt.changes, status: lpt.afterImb <= S.cfg.target ? "ok" : "over", pr: lpt },
+      { key: "mm", title: "Minimum moves", sub: "Default · fewest circuits renumbered", circuits: mm.newCircuits, loads: mm.after, imb: mm.afterImb, changes: mm.changes, status: mm.afterImb <= S.cfg.target ? "ok" : mm.status === "locked" ? "locked" : "needs", pr: mm, best: true },
+    ];
+    const both = lpt.afterImb <= S.cfg.target && mm.afterImb <= S.cfg.target;
+    let pitch;
+    if (cur.imb <= S.cfg.target) pitch = `${p.name} is already within ${S.cfg.target}%. Minimum moves leaves it alone; a fresh layout would still renumber <em>${plural(lpt.changes.length, "circuit")}</em>.`;
+    else if (both) pitch = `Both reach the target. Minimum moves renumbers <em>${plural(mm.changes.length, "circuit")}</em>; a fresh layout renumbers ${plural(lpt.changes.length, "circuit")}.`;
+    else pitch = `Minimum moves reaches ${pct(mm.afterImb)} with ${plural(mm.changes.length, "circuit")} renumbered; a fresh layout reaches ${pct(lpt.afterImb)} with ${plural(lpt.changes.length, "circuit")}.`;
+    const options = S.panels.map((q) => `<option value="${q.id}" ${q.id === p.id ? "selected" : ""}>${q.name} · ${esc(q.use)}</option>`).join("");
+    const col = (c) => {
+      const moved = new Map(c.changes.map((ch) => [ch.id, ch]));
+      const occ = new Map(); for (const k of c.circuits) for (const s of PM.slotsOf(k)) occ.set(s, k);
+      let cells = "";
+      for (let s = 1; s <= p.ways; s++) {
+        const k = occ.get(s); const ph = PM.phaseOfSlot(s);
+        if (!k || k.spare) { cells += `<div class="sm ph-${ph}" title="Slot ${s}, phase ${ph}">${s}<span class="va">${k ? "spare" : ""}</span></div>`; continue; }
+        const mv = moved.get(k.id);
+        const share = PM.basisVA(k, S.cfg) / k.poles;
+        cells += `<div class="sm load ph-${ph} ${mv ? "moved" : ""} ${PM.isLocked(k, S.cfg) ? "locked" : ""}" title="${esc(k.name)} · slot ${s}, phase ${ph}${mv ? ` · was slot ${mv.fromSlot}` : ""}"><b>${s}</b>${mv ? `<span>← ${mv.fromSlot}</span>` : ""}<span class="va">${fmt(share)}</span></div>`;
+      }
+      const issued = c.pr ? issuedOf(c.pr) : new Set();
+      const sheets = new Set(); for (const ch of c.changes) for (const sh of ch.sheets || []) sheets.add(sh.id);
+      const max = Math.max(c.loads.A, c.loads.B, c.loads.C) || 1;
+      return `<div class="card cmp-col ${c.best ? "best" : ""}">
+        <div class="card-h"><h2>${c.title}</h2>${chip(c.status)}<span class="card-sub" style="flex-basis:100%">${c.sub}</span></div>
+        <div class="cmp-stats">
+          <div><span class="k">Imbalance</span><span class="v ${c.imb > S.cfg.target ? "tx-alarm" : "tx-fix"}">${pct(c.imb)}</span></div>
+          <div><span class="k">Renumbered</span><span class="v">${c.key === "drawn" ? "–" : c.changes.length}</span></div>
+        </div>
+        <div class="pl" style="padding-bottom:4px">${PHASES.map((ph) => `<div class="pl-row ph-${ph}"><span class="pl-tag">${ph}</span><div class="pl-main"><div class="pl-track"><span class="pl-bar" style="width:${(c.loads[ph] / max * 92).toFixed(1)}%"></span></div><div class="pl-vals"><span><b>${fmt(c.loads[ph])}</b> VA</span></div></div></div>`).join("")}</div>
+        <div class="slotmap" aria-label="Slot map">${cells}</div>
+        <div class="cmp-list">
+          ${c.key === "drawn" ? `<span>The layout as currently modelled.</span>` : c.changes.length ? `<span><b>${plural(sheets.size, "sheet")}</b> with circuit tags to update${issued.size ? `, <b class="tx-warn">${issued.size} already issued</b>` : ""}</span><div class="sheets">${[...sheets].map((id) => `<span class="sheet-tag ${issued.has(id) ? "issued" : ""}">${id}</span>`).join("")}</div>` : `<span>No circuit changes.</span>`}
+        </div>
+      </div>`;
+    };
+    return `<section class="view" aria-labelledby="h-cmp">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Steps 2–3 · Optimise and propose</p>
+          <h1 id="h-cmp">Approach comparison</h1>
+          <p class="cmp-pitch" style="margin-top:10px">${pitch}</p>
+        </div>
+        <div class="actions" style="align-items:center">
+          <label class="ctl-label" for="cmp-panel">Panel</label>
+          <select id="cmp-panel">${options}</select>
+          <button class="btn" data-act="cmp-worked">Load the worked example</button>
+        </div>
+      </div>
+      <div class="cmp-grid">${cols.map(col).join("")}</div>
+      <p class="hint">Both approaches run on the same core and the same ${S.cfg.target}% target. The fresh layout suits panels with no drawings issued yet; minimum moves suits panels already on issued sheets, because every renumbered circuit means re-tagging plans and homerun annotations.</p>
+    </section>`;
+  }
+
+  // ---------------------------------------------------------------- report view
+  function kpis() {
+    const n = S.panels.length;
+    const audited = S.panels.filter((p) => p.audit).length;
+    const within = S.panels.filter((p) => live(p).imb <= S.cfg.target).length;
+    const flaggedWithReason = S.panels.filter((p) => p.proposal && p.review !== "applied" && ["needs", "locked"].includes(p.proposal.status)).length;
+    const applied = S.tx.filter((t) => !t.undone);
+    const avgMoves = applied.length ? applied.reduce((s, t) => s + t.changes, 0) / applied.length : null;
+    const acted = S.panels.filter((p) => p.proposal && (p.review || ["needs", "locked"].includes(p.proposal.status)));
+    const logged = acted.filter((p) => S.log.some((r) => r.panel === p.name)).length;
+    return [
+      { id: "O1", name: "Panels audited automatically before issue", val: audited ? `${Math.round(audited / n * 100)}%` : "–", target: "100%", met: audited === n },
+      { id: "O2", name: `Panels within ${S.cfg.target}% now`, val: audited ? `${within}/${n}` : "–", target: `≥ 95%, others flagged (${flaggedWithReason} flagged)`, met: audited && (within / n >= 0.95 || within + flaggedWithReason === n) },
+      { id: "O3", name: "Average circuits renumbered per corrected panel", val: avgMoves == null ? "–" : avgMoves.toFixed(1), target: "≤ 3", met: avgMoves != null && avgMoves <= 3 },
+      { id: "O4", name: "Engineer minutes per panel", val: "Measure in pilot week 1", na: true, target: "from ~15–20 to ≤ 3", met: null },
+      { id: "O5", name: "Decisions with a before/after record", val: acted.length ? `${Math.round(logged / acted.length * 100)}%` : "–", target: "100%", met: acted.length && logged === acted.length },
+    ];
+  }
+
+  const CSV_COLS = ["timestamp", "project", "panel", "basis", "LA_before", "LB_before", "LC_before", "imbalance_before_pct", "LA_after", "LB_after", "LC_after", "imbalance_after_pct", "circuits_moved", "changes", "status", "engineer", "approach"];
+  function csvText() {
+    const q = (v) => { const s = String(v == null ? "" : v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    return [CSV_COLS.join(","), ...S.log.map((r) => CSV_COLS.map((c) => q(r[c])).join(","))].join("\n");
+  }
+
+  function viewReport() {
+    const K = kpis();
+    const tiles = K.map((k) => `<div class="card kpi">
+      <span class="kid">${k.id}</span><span class="kname">${k.name}</span>
+      <span class="kval ${k.na ? "na" : ""}">${k.val}</span>
+      <span class="ktarget">Pilot target ${k.target}</span>
+      ${k.met === null ? `<span class="chip chip-unknown">${icon("dot")}Not measured in a dry run</span>` : k.met ? `<span class="chip chip-ok">${icon("check")}Met</span>` : `<span class="chip chip-unknown">${icon("dot")}Not yet</span>`}
+    </div>`).join("");
+    const logRows = S.log.slice().reverse().map((r) => `<tr>
+      <td class="num nw">${r.timestamp.replace("T", " ")}</td><td><b>${r.panel}</b></td>
+      <td class="num r nw">${fmt(r.LA_before)} / ${fmt(r.LB_before)} / ${fmt(r.LC_before)}</td><td class="num r">${r.imbalance_before_pct}%</td>
+      <td class="num r nw">${fmt(r.LA_after)} / ${fmt(r.LB_after)} / ${fmt(r.LC_after)}</td><td class="num r">${r.imbalance_after_pct}%</td>
+      <td class="num r">${r.circuits_moved}</td><td class="num" style="white-space:normal;min-width:180px">${esc(r.changes) || "–"}</td>
+      <td>${esc(r.status)}</td><td>${esc(r.engineer)}</td></tr>`).join("");
+    const txs = S.tx.map((t) => `<li class="${t.undone ? "undone" : ""}"><span class="tname">${esc(t.name)}</span>
+      <span class="hint">${t.group ? esc(t.group) + " · " : ""}${plural(t.changes, "circuit")} · ${hms(t.at)}</span>
+      ${t.undone ? `<span class="chip chip-rejected">Undone</span>` : `<button class="btn btn-sm" data-act="undo" data-id="${t.id}">${icon("undo")} Undo</button>`}</li>`).join("");
+    return `<section class="view" aria-labelledby="h-rep">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Step 5 · Apply and report</p>
+          <h1 id="h-rep">Report & log</h1>
+          <p class="summary">Pilot success measures from §4, computed from this session. Every apply, reject and flagged panel writes a row to the change log.</p>
+        </div>
+        <div class="actions">
+          ${S.dl === "local" || S.dl === "ok" ? `<button class="btn" data-act="csv-download" ${S.log.length ? "" : "disabled"}>${icon("download")} Download CSV</button>` : ""}
+          <button class="btn" data-act="csv-copy" ${S.log.length ? "" : "disabled"}>${icon("copy")} Copy CSV</button>
+        </div>
+      </div>
+      <div class="kpis">${tiles}</div>
+      <div class="card"><div class="card-h"><h2>Transactions</h2><span class="card-sub">Each apply is one named, undoable model change</span></div>
+        ${txs ? `<ul class="tx-list">${txs}</ul>` : `<div class="empty-state"><p>No transactions yet. Apply a proposal from the panel workspace or the audit table.</p></div>`}</div>
+      <div class="card"><div class="card-h"><h2>Change log</h2><span class="card-sub">Columns follow §13.1 · VA per phase A / B / C</span></div>
+        ${logRows ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Time</th><th>Panel</th><th class="r">Before (VA)</th><th class="r">Imb.</th><th class="r">After (VA)</th><th class="r">Imb.</th><th class="r">Moved</th><th>Changes</th><th>Status</th><th>Engineer</th></tr></thead><tbody>${logRows}</tbody></table></div>`
+        : `<div class="empty-state"><p>The log is empty. Rows appear when proposals are applied, rejected or flagged for an engineer.</p></div>`}</div>
+      <div class="card"><div class="card-h"><h2>phase_balancer_log.csv</h2><span class="card-sub">What the pyRevit button would append</span></div>
+        <pre class="csv" id="csv-pre" tabindex="0">${esc(csvText())}</pre></div>
+    </section>`;
+  }
+
+  // ---------------------------------------------------------------- rules view
+  const RULES = [
+    ["R1", "Only 1-pole, unlocked circuits are movable", "Hard", "Multi-pole and locked circuits enter the core as fixed loads."],
+    ["R2", "Multi-pole circuits stay put; load splits equally across their phases", "Hard", "A 2-pole adds half its load to each phase it spans, a 3-pole a third. See PP-1A and PP-R1."],
+    ["R3", "Locked slots and DoNotMove circuits are never moved", "Hard", "Click any padlock on the panelboard. An open proposal re-runs and works around it."],
+    ["R4", "1-pole circuits on a phase cannot exceed the slots that phase offers", "Hard", "Slot capacity per phase is passed to the search. RP-2B has no free C slots, so it can only swap."],
+    ["R5", "Imbalance must be ≤ the target", "Goal", "Target slider from 5 to 15%. The search stops as soon as the target is met."],
+    ["R6", "Minimise circuits renumbered", "Objective", "Each candidate is scored by imbalance removed per circuit renumbered; a swap counts as two."],
+    ["R7", "Spares and spaces are valid targets; occupied slots change only through swaps", "Hard", "A displaced spare takes the vacated slot. See PP-1A."],
+    ["R8", "Keep circuits from the same group together", "Soft (v2)", "Not simulated in v1."],
+    ["R9", "Balance on connected or demand VA", "Config", "Basis toggle in the panel workspace. The demand factors in Settings are illustrative until the project standard is confirmed."],
+  ];
+  const ASSUME = [
+    "Panels follow the standard A-B-C row sequence. Check for non-standard panel families.",
+    "The balance basis is connected VA, or demand VA if the project standard says so.",
+    "The firm threshold is 10% unless a project specifies otherwise.",
+    "pyRevit is permitted on production machines. If not, plan for the C# add-in route.",
+    "How Revit's built-in Rebalance Loads treats locked slots in the firm's Revit version.",
+    "Renumbering after issue is acceptable when it goes through a revision cloud and is logged.",
+  ];
+
+  function configJson() {
+    const c = S.cfg;
+    const obj = {
+      imbalance_target_pct: c.target, balance_basis: c.basis, default_approach: c.approach,
+      max_moves_per_panel: c.maxMoves, respect_locked_slots: c.respectLocks, do_not_move_parameter: c.doNotMoveParam,
+      log_path: "./phase_balancer_log.csv", system_voltage: c.voltage, demand_factors: c.demandFactors,
+    };
+    return esc(JSON.stringify(obj, null, 2)).replace(/(&quot;[a-z_]+&quot;):/gi, '<span class="k1">$1</span>:').replace(/: (&quot;[^&]*&quot;|[\d.]+|true|false)/g, ': <span class="v1">$1</span>');
+  }
+
+  function viewRules() {
+    const c = S.cfg;
+    const checked = store.get("pbc-assumptions") || {};
+    const tests = S.tests;
+    return `<section class="view" aria-labelledby="h-rules">
+      <div class="view-head"><div>
+        <p class="eyebrow">Configuration</p>
+        <h1 id="h-rules">Rules & config</h1>
+        <p class="summary">Firm settings live in <span class="mono">config.json</span>, not in code. Change them here and every proposal re-runs.</p>
+      </div></div>
+      <div class="cfg-grid">
+        <div class="card"><div class="card-h"><h2>Settings</h2></div>
+          <div class="form">
+            <label for="cfg-target">Imbalance target (%)</label><input type="number" id="cfg-target" min="1" max="30" step="1" value="${c.target}">
+            <label for="cfg-basis">Balance basis</label><select id="cfg-basis"><option value="connected" ${c.basis === "connected" ? "selected" : ""}>Connected VA</option><option value="demand" ${c.basis === "demand" ? "selected" : ""}>Demand VA</option></select>
+            <label for="cfg-approach">Default approach</label><select id="cfg-approach"><option value="min_move" ${c.approach === "min_move" ? "selected" : ""}>Minimum moves</option><option value="lpt" ${c.approach === "lpt" ? "selected" : ""}>Fresh layout (LPT)</option></select>
+            <label for="cfg-maxmoves">Max moves per panel</label><input type="number" id="cfg-maxmoves" min="1" max="20" step="1" value="${c.maxMoves}">
+            <label for="cfg-respect">Respect locked slots</label><span><input type="checkbox" id="cfg-respect" ${c.respectLocks ? "checked" : ""}></span>
+            <label for="cfg-voltage">System voltage</label><select id="cfg-voltage">${Object.entries(PM.VOLTAGES).map(([k, v]) => `<option value="${k}" ${c.voltage === k ? "selected" : ""}>${v.label}</option>`).join("")}</select>
+            <label for="cfg-engineer">Engineer (for the log)</label><input type="text" id="cfg-engineer" value="${esc(c.engineer)}">
+            ${Object.keys(c.demandFactors).map((k) => `<label for="df-${k}">Demand factor · ${CLS[k]}</label><input type="number" id="df-${k}" min="0" max="1" step="0.05" value="${c.demandFactors[k]}">`).join("")}
+          </div>
+          <pre class="json" aria-label="config.json">${configJson()}</pre>
+        </div>
+        <div class="card"><div class="card-h"><h2>Core self-test</h2><button class="btn btn-sm" data-act="run-tests">${icon("check")} Run T1–T9</button></div>
+          ${tests ? `<ul class="tests">${tests.map((t) => `<li><span class="${t.pass ? "pass" : "fail"}">${icon(t.pass ? "check" : "x")}</span><span class="tid">${t.id}</span><span>${esc(t.name)}<span class="detail">${esc(t.detail)}</span></span></li>`).join("")}</ul>`
+          : `<div class="empty-state"><p>Runs the unit tests from §15.1 against the same core this page uses. The repository also checks the JavaScript port against the Python reference on 300 random panels.</p></div>`}
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h2>Engineering rules</h2><span class="card-sub">§7</span></div>
+        <div class="table-wrap"><table class="tbl rules"><thead><tr><th>ID</th><th>Rule</th><th>Type</th><th>How this dry run enforces it</th></tr></thead>
+        <tbody>${RULES.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td><span class="type ${r[2] === "Hard" ? "hard" : ""}">${r[2]}</span></td><td>${r[3]}</td></tr>`).join("")}</tbody></table></div>
+      </div>
+      <div class="card"><div class="card-h"><h2>Assumptions to confirm with the technical directors</h2><span class="card-sub">§18 · ticks are kept in this browser only</span></div>
+        <ul class="assume">${ASSUME.map((a, i) => `<li><label><input type="checkbox" id="as-${i}" ${checked[i] ? "checked" : ""}><span>${a}</span></label></li>`).join("")}</ul>
+      </div>
+    </section>`;
+  }
+
+  function runSelfTests() {
+    const C = PB.Circuit, P = PHASES, r1 = (x) => Math.round(x * 10) / 10;
+    const worked = () => [2400, 1800, 1500, 1500, 1200, 1000, 900, 800, 600].map((v, i) => C(2 * i + 1, v, [P[i % 3]]));
+    const T = [];
+    const add = (id, name, fn) => { try { const [pass, detail] = fn(); T.push({ id, name, pass, detail }); } catch (e) { T.push({ id, name, pass: false, detail: String(e) }); } };
+    add("T1", "Worked example, minimum moves, target 5%", () => { const [r, m] = PB.minMoveBalance(worked(), { target_pct: 5 }); const i = r1(PB.imbalancePct(PB.phaseLoads(r))); return [i === 2.6 && m.size === 1 && m.has(13), `imbalance ${i}%, moved {${[...m]}}`]; });
+    add("T2", "Worked example, fresh layout (LPT)", () => { const d = worked(), r = PB.lptBalance(d); const mv = r.filter((c, k) => c.phases[0] !== d[k].phases[0]).map((c) => c.number); const i = r1(PB.imbalancePct(PB.phaseLoads(r))); return [i === 2.6 && mv.join() === "7,11,13,15,17", `imbalance ${i}%, moved [${mv}]`]; });
+    add("T3", "Already balanced panel", () => { const [, m] = PB.minMoveBalance([C(1, 1000, ["A"]), C(2, 1000, ["B"]), C(3, 1050, ["C"])], { target_pct: 10 }); return [m.size === 0, `${m.size} moves`]; });
+    add("T4", "All circuits locked", () => { const p = { ways: 6, circuits: [1, 3, 5].map((s, k) => ({ id: "t" + s, slot: s, poles: 1, va: [3000, 500, 500][k], cls: "REC", doNotMove: true })) }; const a = PM.audit(p, S.cfg); return [a.status === "locked", `status ${a.status}`]; });
+    add("T5", "Only 3-pole circuits", () => { const cs = [C(1, 9000, P), C(7, 4500, P)]; const i = PB.imbalancePct(PB.phaseLoads(cs)); const [, m] = PB.minMoveBalance(cs, { target_pct: 5 }); return [i === 0 && m.size === 0, `imbalance ${i}%, ${m.size} moves`]; });
+    add("T6", "One huge 1-pole load", () => { const p = { ways: 12, circuits: [[1, 9000], [3, 1000], [5, 1000], [7, 1000]].map(([s, v]) => ({ id: "h" + s, slot: s, poles: 1, va: v, cls: "EQP" })) }; const r = PM.propose(p, S.cfg, "min_move"); return [!r.reached && r.status === "needs", `${r.status}, best achievable ${pct(r.afterImb)}`]; });
+    add("T7", "Phase C has no free slots", () => { const tr = []; const cs = [C(1, 3000, ["A"]), C(7, 2000, ["A"]), C(3, 1500, ["B"]), C(5, 1000, ["C"]), C(11, 900, ["C"]), C(17, 800, ["C"])]; const [r] = PB.minMoveBalance(cs, { target_pct: 5, slot_capacity: { A: 6, B: 6, C: 3 }, trace: tr }); const bad = tr.some((t) => t.step && t.step.kind === "move" && t.step.to[0] === "C"); const onC = r.filter((c) => c.phases[0] === "C").length; return [!bad && onC <= 3, `no single move onto C; ${onC} circuits on C`]; });
+    add("T8", "Empty panel or zero load", () => { const i = PB.imbalancePct(PB.phaseLoads([])); const [, m] = PB.minMoveBalance([C(1, 0, ["A"])], { target_pct: 5 }); return [i === 0 && m.size === 0, `imbalance ${i}%, no crash`]; });
+    add("T9", "2-pole load splits 50/50 and never moves", () => { const cs = [C(1, 4000, ["A", "B"]), C(5, 3000, ["C"]), C(7, 2500, ["A"]), C(9, 200, ["B"])]; const L = PB.phaseLoads([cs[0]]); const [r] = PB.minMoveBalance(cs, { target_pct: 5 }); const kept = r.find((c) => c.number === 1).phases.join(""); return [L.A === 2000 && L.B === 2000 && kept === "AB", `A ${L.A} / B ${L.B}, stays on ${kept}`]; });
+    return T;
+  }
+
+  // ---------------------------------------------------------------- guided dry run
+  const LP = "LP-2A";
+  const SCENES = [
+    { title: "The pilot model", step: 1,
+      run() { S.view = "audit"; },
+      caption: () => `Twelve 3-phase 4-wire panelboards across five levels of a sample building. Circuits went in by hand, in modelling order, and loads have changed since. Nobody has checked phase balance yet.` },
+    { title: "Audit every panel", step: 1,
+      run(fast) { runAudit(!fast); S.view = "audit"; },
+      caption: () => { const s = auditSummary(); return `One click reads every panel and its circuits. ${s.n} panels checked · ${s.over} above ${S.cfg.target}% · worst: ${s.worst.name} at ${pct(s.worst.audit.imb)}. Nothing in the model has changed.`; } },
+    { title: "Open LP-2A as drawn", step: 1,
+      run() { S.sel = LP; S.view = "workspace"; S.boardMode = "drawn"; S.boardStyle = "board"; S.selCircuit = null; },
+      caption: () => { const a = live(panel(LP)); const avg = a.total / 3; return `LP-2A is the worked example from the concept note. Phase A carries ${fmt(a.loads.A)} VA against an average of ${fmt(avg)} VA, so the panel sits at ${pct(a.imb)}, above the ${S.cfg.target}% target. Phase is fixed by slot row, so balancing means moving breakers.`; } },
+    { title: "Search for the fewest moves", step: 2,
+      run(fast) { const p = panel(LP); S.sel = LP; S.view = "workspace"; S.boardMode = "drawn"; propose(p, "min_move"); if (!fast) { S.anim.trace = true; S.anim.eval = true; } },
+      caption: () => { const pr = panel(LP).proposal; const t = pr.trace[0]; return `The copilot tries every single move (${t.evaluatedMoves}) and every pairwise swap (${t.evaluatedSwaps}), and scores each by imbalance removed per circuit renumbered. One move clears the target, so the search stops after one iteration.`; } },
+    { title: "The proposal", step: 3,
+      run(fast) { S.sel = LP; S.view = "workspace"; if (fast) { S.boardMode = "proposed"; return null; } S.boardMode = "drawn"; return () => setTimeout(() => switchBoard("proposed"), 700); },
+      caption: () => { const p = panel(LP), pr = p.proposal, c = pr.changes[0]; const v = PM.VOLTAGES[S.cfg.voltage].ln; const n0 = PM.neutralCurrent(PM.onePoleLoads(p, S.cfg), v), n1 = PM.neutralCurrent(PM.onePoleLoads({ circuits: pr.newCircuits }, S.cfg), v); return `Move “${c.name}” (${fmt(c.va)} VA) from slot ${c.fromSlot} on phase ${c.fromPhase} to slot ${c.toSlot} on phase ${c.toPhase}. Imbalance falls from ${pct(pr.beforeImb)} to ${pct(pr.afterImb)} and the estimated neutral current from ${n0.toFixed(1)} A to ${n1.toFixed(1)} A. One circuit is renumbered.`; } },
+    { title: "Against a naive rebalance", step: 3,
+      run() { S.view = "compare"; S.compare = LP; },
+      caption: () => { const p = panel(LP); const l = PM.propose(p, S.cfg, "lpt"), m = PM.propose(p, S.cfg, "min_move"); const iss = new Set(); l.changes.forEach((c) => c.sheets.forEach((s) => s.issued && iss.add(s.id))); return `A fresh-layout rebalance (LPT) reaches ${pct(l.afterImb)} too, but renumbers ${plural(l.changes.length, "circuit")} and touches tags on ${plural(iss.size, "issued sheet")}. Minimum moves gets there with ${plural(m.changes.length, "circuit")}.`; } },
+    { title: "Respect the engineer's locks", step: 3,
+      run(fast) {
+        const p = panel(LP); S.sel = LP; S.view = "workspace";
+        const c = p.circuits.find((x) => x.name === "Receptacles – Bay 3");
+        c.doNotMove = true; modelChanged(p); propose(p, "min_move");
+        activity(`${p.name}: circuit ${c.slot} "${c.name}" flagged DoNotMove`);
+        if (fast) { S.boardMode = "proposed"; return null; }
+        S.boardMode = "drawn"; S.anim.trace = true; return () => setTimeout(() => switchBoard("proposed"), 900);
+      },
+      caption: () => { const pr = panel(LP).proposal; const [a, b] = pr.changes; return `“Receptacles – Bay 3” is now flagged DoNotMove. The copilot works around it: it swaps “${a.name}” and “${b.name}” instead and still reaches ${pct(pr.afterImb)}. Two circuits are renumbered rather than one.`; } },
+    { title: "Balance every flagged panel", step: 3,
+      run() {
+        const p = panel(LP); const c = p.circuits.find((x) => x.name === "Receptacles – Bay 3"); c.doNotMove = false; modelChanged(p);
+        activity(`${p.name}: DoNotMove released on circuit ${c.slot}`);
+        balanceAllFlagged(); S.view = "audit";
+      },
+      caption: () => { const ps = S.panels.filter((p) => p.proposal); const ok = ps.filter((p) => p.proposal.status === "proposed"); const other = ps.filter((p) => ["needs", "locked"].includes(p.proposal.status)); return `Batch run on ${plural(ps.length, "flagged panel")}: ${ok.length} proposals meet ${S.cfg.target}%. ${other.map((p) => p.proposal.status === "locked" ? `${p.name} is held back by its locks` : `${p.name} needs an engineer`).join("; ")}${other.length ? ". Each flag carries a reason the engineer can act on." : ""}`; } },
+    { title: "Engineer review", step: 4,
+      run() { S.panels.filter((p) => p.proposal && p.proposal.status === "proposed" && !p.review).forEach((p) => review(p, "accepted")); S.view = "audit"; },
+      caption: () => `The engineer accepts or rejects each proposal, or re-runs it with a different target. Here all ${S.panels.filter((p) => p.review === "accepted").length} are accepted for the demo. Nothing has touched the model yet.` },
+    { title: "Apply and read back", step: 5,
+      run() { applyAccepted(); S.view = "audit"; },
+      caption: () => { const t = S.tx.filter((x) => !x.undone); return `Accepted proposals are written back as named, undoable transactions: ${plural(t.reduce((s, x) => s + x.changes, 0), "circuit")} renumbered across ${plural(t.length, "panel")}. Each panel's phase loads are read back and must match the prediction within ±1 VA.`; } },
+    { title: "Report and log", step: 5,
+      run() { S.view = "report"; },
+      caption: () => { const within = S.panels.filter((p) => live(p).imb <= S.cfg.target).length; return `Every decision is logged with before and after phase loads for the QA record. ${within} of ${S.panels.length} panels are now within ${S.cfg.target}%; the others carry a reason for the engineer.`; } },
+  ];
+
+  function goScene(i) {
+    i = Math.max(0, Math.min(SCENES.length - 1, i));
+    clearTimeout(S.tour.timer);
+    S.tour.on = true; S.tour.i = i;
+    resetProject(); S.cfg = clone(PM.DEFAULT_CONFIG);
+    for (let k = 0; k < i; k++) SCENES[k].run(true);
+    S.anim = {};
+    const post = SCENES[i].run(false);
+    render();
+    window.scrollTo(0, 0);
+    if (typeof post === "function") post();
+    scheduleAuto();
+  }
+  function scheduleAuto() {
+    clearTimeout(S.tour.timer);
+    if (S.tour.on && S.tour.auto && S.tour.i < SCENES.length - 1) S.tour.timer = setTimeout(() => goScene(S.tour.i + 1), 10000);
+    else if (S.tour.auto && S.tour.i >= SCENES.length - 1) { S.tour.auto = false; }
+  }
+  function endTour() { clearTimeout(S.tour.timer); S.tour.on = false; S.tour.auto = false; render(); }
+
+  function viewPresenter() {
+    const sc = SCENES[S.tour.i];
+    let cap = "";
+    try { cap = sc.caption(); } catch (e) { cap = ""; }
+    return `<div class="pz">
+      <div class="pz-progress">${SCENES.map((s, k) => `<button class="${k < S.tour.i ? "done" : k === S.tour.i ? "now" : ""}" data-act="scene" data-id="${k}" aria-label="Scene ${k + 1}: ${esc(s.title)}"></button>`).join("")}</div>
+      <div>
+        <div class="pz-step">Scene ${S.tour.i + 1} of ${SCENES.length} · Step ${sc.step} ${STEPS[sc.step - 1]}</div>
+        <h3 class="pz-title">${esc(sc.title)}</h3>
+        <p class="pz-caption">${esc(cap)}</p>
+      </div>
+      <div class="pz-ctl">
+        <button class="btn" data-act="scene-prev" ${S.tour.i === 0 ? "disabled" : ""}>${icon("prev")} Back</button>
+        <button class="btn btn-primary" id="pz-next" data-act="scene-next" ${S.tour.i === SCENES.length - 1 ? "disabled" : ""}>Next ${icon("next")}</button>
+        <button class="btn" data-act="scene-auto" aria-pressed="${S.tour.auto}">${icon(S.tour.auto ? "pause" : "play")} ${S.tour.auto ? "Pause" : "Auto-play"}</button>
+        <button class="btn" data-act="tour-end">Explore freely</button>
+      </div>
+    </div>`;
+  }
+
+  // ---------------------------------------------------------------- animation
+  function switchBoard(mode) {
+    const before = new Map($$(".board [data-cid]").map((el) => [el.dataset.cid, el.getBoundingClientRect()]));
+    S.boardMode = mode;
+    render();
+    if (reduced() || !Element.prototype.animate) return;
+    $$(".board [data-cid]").forEach((el) => {
+      const b = before.get(el.dataset.cid);
+      if (!b) return;
+      const a = el.getBoundingClientRect();
+      const dx = b.left - a.left, dy = b.top - a.top;
+      if (Math.abs(dx) + Math.abs(dy) < 1) return;
+      el.classList.add("flying");
+      const anim = el.animate([
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - 26}px) scale(1.04)`, offset: 0.5 },
+        { transform: "translate(0, 0)" },
+      ], { duration: 1150, easing: "cubic-bezier(.35, 0, .2, 1)" });
+      anim.onfinish = () => el.classList.remove("flying");
+    });
+  }
+
+  function tween(from, to, ms, step) {
+    if (reduced() || from === to) { step(to); return; }
+    const t0 = performance.now();
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    const tick = (t) => { const k = Math.min(1, (t - t0) / ms); step(from + (to - from) * ease(k)); if (k < 1) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  }
+
+  function afterRender() {
+    if (S.view !== "workspace") return;
+    const p = panel(S.sel);
+    const memo = vizMemo(p);
+    // phase bars
+    const bars = $$(".pl-bar[data-w]");
+    if (bars.length) { void bars[0].offsetWidth; requestAnimationFrame(() => bars.forEach((b) => { b.style.width = b.dataset.w; })); }
+    memo.bars = memo.barsNext;
+    // big imbalance number
+    const big = $(".imb-big[data-tween-to]");
+    if (big) {
+      const from = parseFloat(big.dataset.tweenFrom), to = parseFloat(big.dataset.tweenTo);
+      memo.imb = to;
+      tween(from, to, 900, (v) => { big.textContent = pct(v); });
+    }
+    // phasor
+    const svg = $("#phasor");
+    if (svg) {
+      const to = { a: +svg.dataset.a, b: +svg.dataset.b, c: +svg.dataset.c };
+      const max = +svg.dataset.max || 1;
+      const from = memo.phasor || to;
+      memo.phasor = to;
+      tween(0, 1, 900, (k) => drawPhasor(svg, { a: from.a + (to.a - from.a) * k, b: from.b + (to.b - from.b) * k, c: from.c + (to.c - from.c) * k }, max));
+    }
+  }
+
+  // ---------------------------------------------------------------- misc UI
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3600);
+  }
+  function setTheme() {
+    const root = document.documentElement;
+    const cur = root.getAttribute("data-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    store.set("pbc-theme", next);
+  }
+  function openPanel(id) {
+    if (S.sel !== id) { S.selCircuit = null; S.boardMode = "drawn"; }
+    S.sel = id; S.view = "workspace";
+  }
+  function runCopilot(p) {
+    const pr = propose(p, S.cfg.approach, { log: true });
+    S.anim.trace = true;
+    if (pr.changes.length && p.review !== "applied") {
+      S.boardMode = "drawn"; render();
+      setTimeout(() => switchBoard("proposed"), reduced() ? 0 : 450);
+    } else render();
+  }
+
+  // ---------------------------------------------------------------- events
+  const ACTIONS = {
+    "view": (id) => { S.view = id; render(); $("#main").focus({ preventScroll: true }); },
+    "open-panel": (id) => { openPanel(id); render(); window.scrollTo({ top: 0, behavior: reduced() ? "auto" : "smooth" }); },
+    "run-audit": () => { runAudit(true); S.view = "audit"; render(); },
+    "balance-all": () => { const f = balanceAllFlagged(); render(); toast(`Proposals generated for ${plural(f.length, "panel")}. Review them in the table.`); },
+    "apply-accepted": () => { const n = applyAccepted(); render(); toast(`${plural(n, "transaction")} committed. Undo is available in Report & log.`); },
+    "accept": (id) => { review(panel(id), "accepted"); render(); },
+    "reject": (id) => { review(panel(id), "rejected"); render(); },
+    "unreview": (id) => { panel(id).review = null; render(); },
+    "apply": (id) => { const p = panel(id); if (apply(p)) { S.boardMode = "drawn"; render(); toast(`Applied as “Phase Balancer – ${p.name}”.`); } else render(); },
+    "undo": (id) => { undo(id); S.boardMode = "drawn"; render(); toast("Transaction undone. The original layout is back."); },
+    "sort": (key) => { S.sort = { key, dir: S.sort.key === key ? -S.sort.dir : key === "name" || key === "level" ? 1 : -1 }; render(); },
+    "approach": (id) => { S.cfg.approach = id; const p = panel(S.sel); if (p.proposal && p.review !== "applied") runCopilot(p); else render(); },
+    "basis": (id) => { S.cfg.basis = id; configChanged(); render(); },
+    "run-copilot": () => runCopilot(panel(S.sel)),
+    "design-change": () => { const r = simulateDesignChange(panel(S.sel)); render(); if (r) toast(`${r.ch.kind}: circuit ${r.c.slot} is now ${fmt(r.c.va)} VA. Re-run the audit to see the drift flagged.`); },
+    "board-mode": (id) => { if (id === S.boardMode) return; switchBoard(id); },
+    "board-style": (id) => { S.boardStyle = id; render(); },
+    "pick-circuit": (id) => { S.selCircuit = S.selCircuit === id ? null : id; render(); },
+    "close-insp": () => { S.selCircuit = null; render(); },
+    "toggle-lock": (id) => { const p = panel(S.sel); const re = toggleLock(p, id); if (re && p.proposal.changes.length) { S.anim.trace = true; S.boardMode = "drawn"; render(); setTimeout(() => switchBoard("proposed"), reduced() ? 0 : 450); } else render(); },
+    "focus-target": () => { const el = $("#target"); if (el) { el.focus(); el.scrollIntoView({ block: "center", behavior: reduced() ? "auto" : "smooth" }); toast("Adjust the target, then press Run copilot."); } },
+    "cmp-worked": () => { S.compare = LP; render(); },
+    "csv-download": () => {
+      const filename = `phase_balancer_log_${isoMin(new Date()).slice(0, 10)}.csv`;
+      if (S.dl === "ok" && S.dlNs) {
+        S.dlNs.save({ filename, data: csvText() }).then(
+          (r) => toast(r && r.status === "delivered" ? "CSV handed over." : "CSV saved."),
+          (e) => toast(e && e.code === "declined" ? "Download cancelled." : e && e.code === "rate_limited" ? "A save prompt is already open." : "This viewer could not save the file. Use Copy CSV instead."));
+        return;
+      }
+      const blob = new Blob([csvText()], { type: "text/csv" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast("Download started.");
+    },
+    "csv-copy": () => {
+      const text = csvText();
+      const fallback = () => { const pre = $("#csv-pre"); if (pre) { const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); } toast("Copying is blocked here. The CSV text is selected, so press Ctrl+C or ⌘C."); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast(`CSV copied: ${plural(S.log.length, "row")}.`), fallback);
+      else fallback();
+    },
+    "run-tests": () => { S.tests = runSelfTests(); render(); const f = S.tests.filter((t) => !t.pass).length; toast(f ? `${f} of 9 tests failed.` : "All 9 tests pass."); },
+    "reset": () => { resetProject(); S.view = "audit"; S.tour.on = false; render(); toast("Sample model restored to its drawn state."); },
+    "theme": () => setTheme(),
+    "tour-start": () => { S.tour.auto = false; goScene(0); },
+    "tour-end": () => endTour(),
+    "scene": (id) => goScene(+id),
+    "scene-next": () => goScene(S.tour.i + 1),
+    "scene-prev": () => goScene(S.tour.i - 1),
+    "scene-auto": () => { S.tour.auto = !S.tour.auto; render(); scheduleAuto(); },
+  };
+
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-act]");
+    if (!el || el.disabled) return;
+    const fn = ACTIONS[el.dataset.act];
+    if (!fn) return;
+    e.preventDefault();
+    fn(el.dataset.id);
+  });
+  document.addEventListener("keydown", (e) => {
+    const el = e.target;
+    if ((e.key === "Enter" || e.key === " ") && el.getAttribute && el.getAttribute("role") === "button" && el.dataset.act) { e.preventDefault(); el.click(); return; }
+    if (!S.tour.on || /INPUT|SELECT|TEXTAREA/.test(el.tagName)) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); goScene(S.tour.i + 1); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); goScene(S.tour.i - 1); }
+    else if (e.key === "Escape") endTour();
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.id === "target") { const o = $("#target-out"); if (o) o.textContent = `${e.target.value}%`; }
+  });
+  document.addEventListener("change", (e) => {
+    const el = e.target, id = el.id;
+    const p = panel(S.sel);
+    if (id === "target" || id === "cfg-target") { S.cfg.target = Math.max(1, Math.min(30, +el.value || 10)); configChanged(); render(); return; }
+    if (id === "cfg-basis") { S.cfg.basis = el.value; configChanged(); render(); return; }
+    if (id === "cfg-approach") { S.cfg.approach = el.value; render(); return; }
+    if (id === "cfg-maxmoves") { S.cfg.maxMoves = Math.max(1, +el.value || 6); configChanged(); render(); return; }
+    if (id === "cfg-respect") { S.cfg.respectLocks = el.checked; configChanged(); render(); return; }
+    if (id === "cfg-voltage") { S.cfg.voltage = el.value; render(); return; }
+    if (id === "cfg-engineer") { S.cfg.engineer = el.value.trim() || "Pilot engineer"; render(); return; }
+    if (id.startsWith("df-")) { S.cfg.demandFactors[id.slice(3)] = Math.max(0, Math.min(1, +el.value)); configChanged(); render(); return; }
+    if (id === "cmp-panel") { S.compare = el.value; render(); return; }
+    if (id.startsWith("as-")) { const st = store.get("pbc-assumptions") || {}; st[id.slice(3)] = el.checked; store.set("pbc-assumptions", st); return; }
+    if (id === "insp-va" || id === "insp-dnm" || id === "insp-ls") {
+      const c = p.circuits.find((x) => x.id === S.selCircuit); if (!c) return;
+      const had = p.proposal && p.review !== "applied" ? p.proposal.approach : null;
+      if (id === "insp-va") { const old = c.va; c.va = Math.max(0, Math.round(+el.value || 0)); activity(`${p.name}: circuit ${c.slot} load edited ${fmt(old)} → ${fmt(c.va)} VA`, "warn"); }
+      if (id === "insp-dnm") c.doNotMove = el.checked;
+      if (id === "insp-ls") c.lockedSlot = el.checked;
+      modelChanged(p);
+      if (had) propose(p, had);
+      render();
+    }
+  });
+
+  const VIEWS = { audit: viewAudit, workspace: viewWorkspace, compare: viewCompare, report: viewReport, rules: viewRules };
+
+  // ---------------------------------------------------------------- boot
+  const savedTheme = store.get("pbc-theme");
+  if (savedTheme === "dark" || savedTheme === "light") document.documentElement.setAttribute("data-theme", savedTheme);
+  resetProject();
+  const hp = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  if (hp.get("theme")) document.documentElement.setAttribute("data-theme", hp.get("theme"));
+  if (hp.get("scene")) {
+    goScene((+hp.get("scene") || 1) - 1);
+    if (hp.get("presenter") === "off") { S.tour.on = false; }
+  }
+  if (hp.get("panel")) S.sel = hp.get("panel");
+  if (hp.get("view")) S.view = hp.get("view");
+  if (hp.get("mode")) S.boardMode = hp.get("mode");
+  if (hp.get("style")) S.boardStyle = hp.get("style");
+  if (hp.get("tests")) S.tests = runSelfTests();
+  render();
+  if (S.dl === "pending") {
+    window.claude.use("downloads").then((d) => { S.dlNs = d; S.dl = d ? "ok" : "none"; if (S.view === "report") render(); }, () => { S.dl = "none"; if (S.view === "report") render(); });
+  }
+  window.__pbc = { S, render, goScene };
+})();
+
+</script>
+</body>
+</html>

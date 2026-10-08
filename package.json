@@ -1,0 +1,11 @@
+{
+  "name": "phase-balancing-copilot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dry-run simulator for the Panel Schedule and Phase-Balancing Copilot (AI x Electrical BIM case study).",
+  "scripts": {
+    "test": "node --test tests/",
+    "build": "node scripts/build.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
