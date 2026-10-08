@@ -11,37 +11,44 @@ A standalone web app that walks through the **Panel Schedule & Phase-Balancing C
 
 ## Presenting it
 
-1. Press **Guided dry run** in the top bar. Eleven scenes tell the story from an unaudited model to the QA log.
-2. Use **→ / ←** or the Next and Back buttons, **Esc** to leave, and **Auto-play** for a hands-free loop of about 10 seconds per scene.
-3. Press **Explore freely** at any point to take questions live. The model stays in the state the scene left it in.
+1. Press **Guided dry run** (the play button on a phone). Eleven scenes tell the story from an unaudited model to the QA log.
+2. Use **→ / ←** or Next and Back, **Esc** or Exit to leave, and **Auto-play** for a hands-free loop of about 10 seconds per scene.
+3. Press **Exit** at any point to take questions live. The model stays in the state the scene left it in.
+
+For someone new to the topic, the **?** button shows a three-line explainer of phase balancing. On the audit screen, the **Next step** bar always shows the one action to take: Run audit, then Find fixes, Accept, Apply, and finally the report.
 
 Deep links jump straight into a state, which helps if a meeting runs short:
 
 | Link suffix | Opens |
 |---|---|
-| `#scene=5` | The LP-2A proposal with the breaker animation |
-| `#scene=6` | Minimum moves against fresh layout (LPT) |
+| `#scene=5` | The LP-2A fix with the breaker animation |
+| `#scene=6` | Fewest moves against a fresh layout |
 | `#scene=7` | Locking a circuit and watching the copilot work around it |
-| `#scene=11` | Report, KPIs and CSV |
+| `#scene=11` | Report and pilot measures |
 | `&presenter=off` | Hides the presenter strip |
+| `&intro=off` | Hides the explainer |
 | `&theme=dark` | Forces the dark theme |
 
 ## What is on screen
 
-| View | What it shows |
+Every screen shows the essentials first. Engineering detail sits in sections that open on demand, such as the search steps, neutral current, the full numbers table and the CSV.
+
+| Screen | What it shows |
 |---|---|
-| **Project audit** | Riser diagram of 12 panels across five levels, a before/after imbalance chart and a sortable audit table with accept and reject per panel. |
-| **Panel workspace** | The physical panelboard with A-B-C bus bars, breakers by slot, 1-, 2- and 3-pole breakers, spares, spaces and padlocks. It also shows phase loading against the target band, a neutral-current phasor, the review dialog in the §12 style, the search trace and a plain-language summary. |
-| **Approach comparison** | As drawn, fresh layout (LPT) and minimum moves side by side, with circuits renumbered and the issued sheets touched. |
-| **Report & log** | Pilot KPIs O1 to O5, undoable transactions, the §13.1 change log and the CSV. |
-| **Rules & config** | Live `config.json`, the R1 to R9 rules and how each is enforced, the T1 to T9 self-test and the §18 assumptions checklist. |
+| **Audit** | The next step, three headline counts, a riser diagram of 12 panels across five levels, and a "Panels to look at" list where each panel is described in one sentence with Accept and Reject buttons. |
+| **Panel** | A plain-language status line, one "Find the fewest moves" button and a target slider. It shows the panelboard with A-B-C bus bars, locks, spares and spaces, a balance card with the three phases against the target band, and the proposed fix written as a list of moves. |
+| **Compare** | As drawn, a fresh layout and fewest moves side by side, with how many circuits each renumbers. |
+| **Report** | Pilot measures O1 to O5, every decision, undoable model changes, the CSV export and the activity log. |
+| **Settings** | The main firm settings, more settings and `config.json` on demand, the T1 to T9 self-test, rules R1 to R9 and the §18 questions checklist. |
+
+**On a phone,** navigation moves to a bottom bar and a dropdown replaces the panel list. The panelboard shrinks to fit the screen, showing circuit numbers and loads, and you tap a breaker to see its name. Nothing scrolls sideways.
 
 Things to try live:
 
-- **Lock a circuit.** Click a padlock on a breaker and the copilot re-runs around it.
-- **Change the target.** Drag the target slider and re-run.
-- **Change the basis.** Switch between connected and demand VA.
-- **Simulate drift.** Press "Simulate design change" to make a load drift, then re-run the audit to see it flagged.
+- **Lock a circuit.** Tap a padlock on a breaker and the copilot re-runs around it.
+- **Change the target.** Drag the target slider, then press Find the fewest moves.
+- **Change the basis.** Open More options to switch between connected and demand load.
+- **Simulate drift.** Use "Simulate a design change", then re-run the audit to see it flagged.
 
 ## Sample panels
 
